@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 from einops import rearrange
+from typing import Tuple
 
 
 def get_intersection(start_point, end_point, x):
@@ -38,7 +39,7 @@ def subdivide_and_noise(line, key):
     return all_points
 
 
-def generate_image(key: jnp.array) -> tuple[jnp.array, jnp.array]:
+def generate_image(key: jnp.array) -> Tuple[jnp.array, jnp.array]:
     key, k_theta, k_center = jax.random.split(key, 3)
     theta = jax.random.uniform(k_theta, (2, ), minval=0.0, maxval=2*jnp.pi)
     centerpoint = jax.random.uniform(k_center, (1, 2), minval=-1.0, maxval=1.0)

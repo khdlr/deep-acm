@@ -37,5 +37,4 @@ def log_image(img, snake, pred, init, tag, step):
     draw_snake(draw, pred, **kwargs)
 
     img = np.asarray(img).astype(np.float32) / 255
-    print('Logging Img')
     wandb.log({tag: wandb.Image(img)}, step=step)

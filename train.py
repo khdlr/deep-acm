@@ -14,7 +14,7 @@ from tqdm import trange
 
 from plotting import log_image
 
-BATCH_SIZE = 4
+BATCH_SIZE = 16
 
 
 class TrainingState(NamedTuple):
@@ -111,7 +111,6 @@ def main():
             loss, *inspection = val_step(state, val_key, net)
             losses.append(loss)
             for i in range(inspection[0].shape[0]):
-                print('logging img')
                 log_image(*[np.asarray(ary[i]) for ary in inspection], f"Val{step}-{i}", epoch)
         wandb.log({f'val/loss': np.mean(losses)}, step=epoch)
 
