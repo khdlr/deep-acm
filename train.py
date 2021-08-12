@@ -39,7 +39,11 @@ def calculate_loss(params, net, imagery, contours):
 
 
 def get_optimizer():
-    return optax.adam(1e-3)
+    optimizer = optax.chain(
+      optax.clip_by_global_norm(0.25),
+      optax.adam(1e-3)
+    )
+    return optimizer
 
 
 def make_batch(key):
@@ -102,13 +106,13 @@ def main():
         # Validate
         val_key = persistent_val_key
         losses = []
-        for step in range(1):
+        for step in range(2):
             val_key, subkey = jax.random.split(val_key)
             loss, *inspection = val_step(state, val_key, net)
             losses.append(loss)
             for i in range(inspection[0].shape[0]):
                 print('logging img')
-                log_image(*[np.asarray(ary[i]) for ary in inspection], "", epoch)
+                log_image(*[np.asarray(ary[i]) for ary in inspection], f"Val{step}-{i}", epoch)
         wandb.log({f'val/loss': np.mean(losses)}, step=epoch)
 
 
