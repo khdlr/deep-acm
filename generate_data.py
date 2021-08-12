@@ -13,7 +13,7 @@ def get_intersection(start_point, end_point, x):
     return y
 
 
-def scan_column(polyline, x, y_vals):
+def scan_column(polyline, y_vals, x):
     start_points = polyline[:-1]
     end_points = polyline[1:]
 
@@ -26,7 +26,7 @@ def scan_column(polyline, x, y_vals):
     return should_fill
 
 
-fill_scanline = jax.vmap(scan_column, [None, 0, None])
+fill_scanline = jax.vmap(scan_column, [None, None, 0], 1)
 
 
 def subdivide_and_noise(line, key):
