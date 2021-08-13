@@ -47,7 +47,7 @@ def generate_image(key: jnp.array) -> Tuple[jnp.array, jnp.array]:
     theta1 = jax.random.uniform(k_theta1, (), minval=0.0, maxval=2*jnp.pi)
     theta2 = jax.random.uniform(k_theta2, (), minval=theta1+np.deg2rad(30), maxval=theta1+np.deg2rad(360-30))
     theta = jnp.stack([theta1, theta2])
-    centerpoint = jax.random.uniform(k_center, (1, 2), minval=-1.0, maxval=1.0)
+    centerpoint = jax.random.uniform(k_center, (1, 2), minval=-0.7, maxval=0.7)
 
     startend = jnp.stack([jnp.cos(theta), jnp.sin(theta)], axis=1)
     p0, pn = jnp.split(startend / jnp.max(jnp.abs(startend), axis=1, keepdims=True), 2, axis=0)
