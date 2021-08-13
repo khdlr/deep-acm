@@ -45,12 +45,3 @@ class DeepSnake(hk.Module):
         for _ in range(iterations):
             vertices = head(vertices, feature_map)
         return vertices
-
-
-class SimpleModel(hk.Module):
-    def __call__(self, x):
-        hiddens = x.shape[-1]
-        initializer = hk.initializers.VarianceScaling(1.0)
-        x = hk.Linear(1 * hiddens, w_init=initializer)(x)
-        x = jax.nn.gelu(x)
-        return hk.Linear(hiddens, w_init=initializer)(x)

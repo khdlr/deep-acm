@@ -6,7 +6,7 @@ import optax
 from generate_data import generate_image 
 from functools import partial
 
-from models.deepsnake import DeepSnake, SimpleModel
+from models.deepsnake import DeepSnake
 from typing import NamedTuple, Mapping
 
 import wandb
