@@ -36,12 +36,23 @@ class SnakeHead(hk.Module):
 
 
 class DeepSnake():
+    def __init__(self, output_intermediates=False):
+        super().__init__()
+        self.output_intermediates = output_intermediates
+
     def __call__(self, imagery, initialization, iterations=5):
         backbone = SimpleBackbone()
         head = SnakeHead()
 
         vertices = initialization
         feature_map = backbone(imagery)
+
+        steps = []
         for _ in range(iterations):
             vertices = head(vertices, feature_map)
-        return vertices
+            steps.append(vertices)
+
+        if self.output_intermediates:
+            return jnp.stack(steps)
+        else:
+            return vertices

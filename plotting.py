@@ -13,28 +13,26 @@ def draw_snake(draw, snake, dashed=False, **kwargs):
             draw.line((x0, y0, x1, y1), **kwargs)
 
 
-def log_image(img, snake, pred, init, tag, step):
+def log_image(img, truth, preds, init, tag, step):
     H, W, C = img.shape
-    snake   = 0.5 * H * (1 + snake)
-    init    = 0.5 * H * (1 + init)
-    pred    = 0.5 * H * (1 + pred)
+    truth = 0.5 * H * (1 + truth)
+    init  = 0.5 * H * (1 + init)
+    preds = 0.5 * H * (1 + preds)
 
-    if C == 1:
-        RGB = [0, 0, 0]
-    elif C == 3:
-        RGB = [0, 1, 2]
-    else:
-        RGB = [3, 2, 1]
+    RGB = [0, 0, 0]
 
     img = (255 * img[:,:,RGB]).astype(np.uint8)
     img = Image.fromarray(img, mode='RGB')
     draw = ImageDraw.Draw(img)
 
     draw_snake(draw, init, fill=(0, 0, 255))
-    draw_snake(draw, snake, fill=(255, 0, 0), width=3)
+    draw_snake(draw, truth, fill=(255, 0, 0), width=3)
 
-    kwargs = dict(fill=(0, 255, 0), width=3)
-    draw_snake(draw, pred, **kwargs)
+    for i, snake in enumerate(preds, 1):
+        kwargs = dict(fill=(0, 255, 0))
+        if i == preds.shape[0]:
+            kwargs['width'] = 3
+        draw_snake(draw, snake, **kwargs)
 
     img = np.asarray(img).astype(np.float32) / 255
     wandb.log({tag: wandb.Image(img)}, step=step)

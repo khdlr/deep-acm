@@ -69,7 +69,7 @@ def val_step(state, key, net):
     imagery, contours = make_batch(key)
     init_contours = jnp.roll(contours, 1, 0)
     predictions = net.apply(state.params, imagery, init_contours)
-    loss = loss_fn(predictions, contours)
+    loss = loss_fn(predictions[-1], contours)
     return loss, imagery, contours, predictions, init_contours
 
 
@@ -78,6 +78,7 @@ def main():
     persistent_val_key = jax.random.PRNGKey(27)
 
     net     = hk.without_apply_rng(hk.transform(DeepSnake()))
+    val_net = hk.without_apply_rng(hk.transform(DeepSnake(output_intermediates=True)))
 
     opt_init, _ = get_optimizer()
     params = net.init(jax.random.PRNGKey(0), *make_batch(jax.random.PRNGKey(0)))
@@ -100,7 +101,7 @@ def main():
         losses = []
         for step in range(2):
             val_key, subkey = jax.random.split(val_key)
-            loss, *inspection = val_step(state, val_key, net)
+            loss, *inspection = val_step(state, val_key, val_net)
             losses.append(loss)
             for i in range(inspection[0].shape[0]):
                 log_image(*[np.asarray(ary[i]) for ary in inspection], f"Val{step}-{i}", epoch)
