@@ -38,7 +38,7 @@ def calculate_loss(params, net, imagery, contours):
 def get_optimizer():
     optimizer = optax.chain(
       optax.clip_by_global_norm(0.25),
-      optax.adam(1e-3)
+      optax.adam(1e-3, eps=1e-3)
     )
     return optimizer
 
