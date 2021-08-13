@@ -23,11 +23,8 @@ class TrainingState(NamedTuple):
 
 
 def loss_fn(predictions, ground_truth):
-    loss_fwd = jnp.sum(jnp.square(predictions - ground_truth), axis=-1)
-    loss_bwd = jnp.sum(jnp.square(predictions[:, ::-1] - ground_truth), axis=-1)
-
-    loss = jnp.mean(jnp.minimum(loss_fwd, loss_bwd))
-
+    loss = jnp.sum(jnp.square(predictions - ground_truth), axis=-1)
+    loss = jnp.mean(loss)
     return loss
 
 
