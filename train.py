@@ -73,16 +73,11 @@ def val_step(state, key, net):
     return loss, imagery, contours, predictions, init_contours
 
 
-def forward_function(imagery, init):
-    model = DeepSnake()
-    return model(imagery, init)
-
-
 def main():
     train_key = jax.random.PRNGKey(42)
     persistent_val_key = jax.random.PRNGKey(27)
 
-    net = hk.without_apply_rng(hk.transform(forward_function))
+    net     = hk.without_apply_rng(hk.transform(DeepSnake()))
 
     opt_init, _ = get_optimizer()
     params = net.init(jax.random.PRNGKey(0), *make_batch(jax.random.PRNGKey(0)))

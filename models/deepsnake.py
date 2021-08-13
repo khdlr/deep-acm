@@ -35,7 +35,7 @@ class SnakeHead(hk.Module):
         return vertices + offsets
 
 
-class DeepSnake(hk.Module):
+class DeepSnake():
     def __call__(self, imagery, initialization, iterations=5):
         backbone = SimpleBackbone()
         head = SnakeHead()
