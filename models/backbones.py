@@ -27,32 +27,38 @@ class ResBlock(hk.Module):
 
 
 class SimpleBackbone(hk.Module):
+    def __init__(self, multiplier):
+        super().__init__()
+        self.multiplier = multiplier
+
     def __call__(self, x):
+        m = self.multiplier
+
         block1 = hk.Sequential([
-            hk.Conv2D(64, 4, 2),
-            ResBlock(64),
-            ResBlock(64)
+            hk.Conv2D(1*m, 4, 2),
+            ResBlock(1*m),
+            ResBlock(1*m)
         ], name='BackboneBlock1')
 
         block2 = hk.Sequential([
-            hk.Conv2D(128, 4, 2),
-            ResBlock(128),
-            ResBlock(128)
+            hk.Conv2D(2*m, 4, 2),
+            ResBlock(2*m),
+            ResBlock(2*m)
         ], name='BackboneBlock2')
 
         block3 = hk.Sequential([
-            hk.Conv2D(256, 4, 2),
-            ResBlock(256),
-            ResBlock(256)
+            hk.Conv2D(4*m, 4, 2),
+            ResBlock(4*m),
+            ResBlock(4*m)
         ], name='BackboneBlock2')
 
         block4 = hk.Sequential([
-            hk.Conv2D(512, 4, 2),
-            ResBlock(512),
-            ResBlock(512),
-            ResBlock(512),
-            ResBlock(512),
-            ResBlock(512)
+            hk.Conv2D(8*m, 4, 2),
+            ResBlock(8*m),
+            ResBlock(8*m),
+            ResBlock(8*m),
+            ResBlock(8*m),
+            ResBlock(8*m)
         ], name='BackboneBlock2')
 
         x = block1(x)
