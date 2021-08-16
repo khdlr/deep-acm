@@ -14,7 +14,8 @@ import pickle
 
 from models.deepsnake import DeepSnake
 from loss_functions import l2_loss, min_min_loss, l1_loss
-from plotting import log_image
+from plotting import log_image, log_video
+
 
 BATCH_SIZE = 16
 METRICS = dict(
@@ -64,6 +65,7 @@ def train_step(state, key, net):
 
     loss_closure = partial(calculate_loss, net=net, imagery=imagery, contours=contours, epoch=state.epoch)
     loss, gradients = jax.value_and_grad(loss_closure)(state.params)
+    # gradients = jax.lax.pmean(gradients, 'device')
     updates, new_opt_state = optimizer(gradients, state.opt_state)
     new_params = optax.apply_updates(state.params, updates)
     return loss, TrainingState(
@@ -105,14 +107,20 @@ def main():
     persistent_val_key = jax.random.PRNGKey(27)
     multiplier = 64
 
-    net     = hk.without_apply_rng(hk.transform(DeepSnake(multiplier)))
-    val_net = hk.without_apply_rng(hk.transform(DeepSnake(multiplier, output_intermediates=True)))
+    net = DeepSnake(multiplier, output_intermediates=False, iterations=5)
+    val_net = DeepSnake(multiplier, output_intermediates=True, iterations=7)
+
+    net     = hk.without_apply_rng(hk.transform(net))
+    val_net = hk.without_apply_rng(hk.transform(val_net))
 
     opt_init, _ = get_optimizer()
     params = net.init(jax.random.PRNGKey(0), *make_batch(jax.random.PRNGKey(0)))
     opt_state = opt_init(params)
     state = TrainingState(params=params, opt_state=opt_state, epoch=jnp.array(0))
     wandb.init(project='Deep Snake Pre-Train')
+
+    name = 'snake_head/conv1_d'
+    p = params[name]['w']
 
     for epoch in range(1, 501):
         prog = trange(1, 10001)
@@ -146,14 +154,15 @@ def main():
         val_key = persistent_val_key
         metrics = {m: [] for m in METRICS}
         metrics['loss'] = []
-        for step in range(2):
+        for step in range(3):
             val_key, subkey = jax.random.split(val_key)
             current_metrics, *inspection = val_step(state, val_key, val_net)
             for m in current_metrics:
                 metrics[m].append(current_metrics[m])
 
-            for i in range(inspection[0].shape[0]):
+            for i in trange(4, desc='Logging Val Images'):
                 log_image(*[np.asarray(ary[i]) for ary in inspection], f"Val{step}-{i}", epoch)
+                log_video(*[np.asarray(ary[i]) for ary in inspection], f"ValAnim{step}-{i}", epoch)
         wandb.log({f'val/{m}': np.mean(metrics[m]) for m in metrics}, step=epoch)
 
 
