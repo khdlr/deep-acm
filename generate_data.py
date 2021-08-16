@@ -57,8 +57,6 @@ def generate_image(key: jnp.array) -> Tuple[jnp.array, jnp.array]:
         key, subkey = jax.random.split(key)
         polyline = subdivide_and_noise(polyline, subkey)
 
-    coords = jnp.linspace(-1, 1, 128)
-
     # Build an outer ring to ensure the polygon being correctly filled
     lerp = jnp.linspace(0.0, 1.0, 4)
     lerp = jnp.stack([lerp, 1-lerp], axis=1)
@@ -72,6 +70,8 @@ def generate_image(key: jnp.array) -> Tuple[jnp.array, jnp.array]:
         outer_points,
         polyline[:1]
     ], axis=0)
+
+    coords = jnp.linspace(-1, 1, 128)
     image = fill_scanline(polyring, coords, coords)
     image = jnp.expand_dims(image, -1).astype(jnp.float32)
 
