@@ -36,7 +36,10 @@ class SnakeHead(hk.Module):
         mk_offset = hk.Conv1D(2, 1, with_bias=False, w_init=hk.initializers.Constant(0))
 
         sampled_features = jax.vmap(sample_at_vertices, [0, 0])(vertices, features)
-        convolved_features = blocks(sampled_features)
+        coord_features = vertices
+        input_features = jnp.concatenate([sampled_features, coord_features], axis=-1)
+
+        convolved_features = blocks(input_features)
         offsets = mk_offset(convolved_features)
         return vertices + offsets
 
