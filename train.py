@@ -13,7 +13,7 @@ from pathlib import Path
 import pickle
 
 from models.deepsnake import DeepSnake
-from loss_functions import l2_loss, min_min_loss, l1_loss
+from loss_functions import l2_loss, min_min_loss, l1_loss, DTW
 from plotting import log_image, log_video
 
 
@@ -29,7 +29,7 @@ def loss_fn(predictions, contours, epoch):
     # l2 = l2_loss(predictions, contours)
     # min_min = min_min_loss(predictions, contours)
     # return (1-beta) * l2 + beta * min_min
-    return l2_loss(predictions, contours)
+    return DTW()(predictions, contours)
 
 
 class TrainingState(NamedTuple):
@@ -122,7 +122,7 @@ def main():
     name = 'snake_head/conv1_d'
     p = params[name]['w']
 
-    for epoch in range(1, 501):
+    for epoch in range(1, 201):
         prog = trange(1, 10001)
         losses = []
         loss_ary = None
