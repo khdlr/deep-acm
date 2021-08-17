@@ -8,6 +8,8 @@ from . import nnutils as nn
 
 
 def sample_at_vertices(vertices: jnp.ndarray, features: jnp.ndarray) -> jnp.ndarray:
+    H, W, C = features.shape
+    vertices = (vertices + 1.0) * (jnp.array([H, W]) / 2.0)
     def resample_feature(feature_map: jnp.ndarray):
         return jnd.map_coordinates(feature_map, vertices.T, order=1, mode='constant')
 
