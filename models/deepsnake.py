@@ -9,7 +9,7 @@ from . import nnutils as nn
 
 def sample_at_vertices(vertices: jnp.ndarray, features: jnp.ndarray) -> jnp.ndarray:
     H, W, C = features.shape
-    vertices = (vertices + 1.0) * (jnp.array([H, W]) / 2.0)
+    vertices = (vertices + 1.0) * (jnp.array([H-1, W-1]) / 2.0)
     def resample_feature(feature_map: jnp.ndarray):
         return jnd.map_coordinates(feature_map, vertices.T, order=1, mode='constant')
 
@@ -23,7 +23,7 @@ class SnakeHead(hk.Module):
         super().__init__()
         self.multiplier = multiplier
 
-    def __call__(self, vertices, features):
+    def __call__(self, vertices, feature_maps):
         C = 8 * self.multiplier
 
         blocks = hk.Sequential([
@@ -35,11 +35,14 @@ class SnakeHead(hk.Module):
             hk.Conv1D(C, 3), nn.ReLU(),
         ], name='SnakeBlocks')
 
-        mk_offset = hk.Conv1D(2, 1, with_bias=False, w_init=hk.initializers.Constant(0))
+        mk_offset = hk.Conv1D(2, 1, with_bias=False)
 
-        sampled_features = jax.vmap(sample_at_vertices, [0, 0])(vertices, features)
-        coord_features = vertices
-        input_features = jnp.concatenate([sampled_features, coord_features], axis=-1)
+        features = []
+        for feature_map in feature_maps:
+            features.append(jax.vmap(sample_at_vertices, [0, 0])(vertices, feature_map))
+        # For coordinate features
+        # features.append(vertices)
+        input_features = jnp.concatenate(features, axis=-1)
 
         convolved_features = blocks(input_features)
         offsets = mk_offset(convolved_features)
@@ -58,11 +61,11 @@ class DeepSnake():
         head = SnakeHead(self.multiplier)
 
         vertices = initialization
-        feature_map = backbone(imagery)
+        feature_maps = backbone(imagery)
 
         steps = []
         for _ in range(self.iterations):
-            vertices = head(vertices, feature_map)
+            vertices = head(vertices, feature_maps)
             steps.append(vertices)
 
         if self.output_intermediates:
