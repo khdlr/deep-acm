@@ -65,4 +65,4 @@ class SimpleBackbone(hk.Module):
         x2 = block2(x1)
         x3 = block3(x2)
         x4 = block4(x3)
-        return [x1, x2, x3, x4]
+        return (x1, x2, x3, x4)
