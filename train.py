@@ -13,7 +13,7 @@ from pathlib import Path
 import pickle
 
 from models.deepsnake import DeepSnake
-from loss_functions import l2_loss, min_min_loss, l1_loss, DTW
+from loss_functions import l2_loss, min_min_loss, l1_loss, DTW, SoftDTW
 from plotting import log_image, log_video
 
 
@@ -21,15 +21,12 @@ BATCH_SIZE = 16
 METRICS = dict(
     l1 = l1_loss,
     l2 = l2_loss,
-    min_min = min_min_loss
+    min_min = min_min_loss,
+    dtw = DTW()
 )
 
 def loss_fn(predictions, contours, epoch):
-    # beta = jax.nn.sigmoid((epoch - 30) / 6)
-    # l2 = l2_loss(predictions, contours)
-    # min_min = min_min_loss(predictions, contours)
-    # return (1-beta) * l2 + beta * min_min
-    return DTW()(predictions, contours)
+    return SoftDTW(gamma=0.01)(predictions, contours)
 
 
 class TrainingState(NamedTuple):
@@ -65,7 +62,6 @@ def train_step(state, key, net):
 
     loss_closure = partial(calculate_loss, net=net, imagery=imagery, contours=contours, epoch=state.epoch)
     loss, gradients = jax.value_and_grad(loss_closure)(state.params)
-    # gradients = jax.lax.pmean(gradients, 'device')
     updates, new_opt_state = optimizer(gradients, state.opt_state)
     new_params = optax.apply_updates(state.params, updates)
     return loss, TrainingState(
@@ -128,13 +124,8 @@ def main():
         loss_ary = None
         state = set_epoch(state, epoch)
         for step in prog:
-            # if epoch == 1 and step == 100:
-            #    jax.profiler.start_trace("tensorboard")
             train_key, subkey = jax.random.split(train_key)
             loss, state = train_step(state, subkey, net)
-            # if epoch == 1 and step == 110:
-            #    loss.block_until_ready()
-            #    jax.profiler.stop_trace()
             losses.append(loss)
             if step % 100 == 0:
                 if loss_ary is None:
