@@ -159,7 +159,7 @@ def main():
                 imgdata.append((*[np.asarray(ary[0]) for ary in inspection], f"Imgs/Val{step}", epoch))
                 log_image
                 log_video(*[np.asarray(ary[0]) for ary in inspection], f"Anim/Val{step}", epoch)
-        wandb.log({f'val/{m}': np.mean(metrics[m]) for m in metrics}, step=epoch)
+        metrics = {m: np.mean(metrics[m]) for m in metrics}
         metric = metrics['loss']
         if metric < running_min:
             last_improvement = epoch
@@ -171,6 +171,9 @@ def main():
         if epoch - last_improvement > PATIENCE:
             print(f'Stopping early because there was no improvement for {PATIENCE} epochs.')
             break
+        metrics['best_loss'] = running_min
+
+        wandb.log({f'val/{m}': metrics[m] for m in metrics}, step=epoch)
 
 
 if __name__ == '__main__':
