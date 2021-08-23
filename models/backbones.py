@@ -4,6 +4,8 @@ import jax.scipy.ndimage as jnd
 import haiku as hk
 
 from . import nnutils as nn
+from .resnet import ResNet18, ResNet34, ResNet50, ResNet101, ResNet152, ResNet200
+from .slim_resnet import SlimResNet18, SlimResNet34, SlimResNet50, SlimResNet101, SlimResNet152, SlimResNet200
 
 
 class ResBlock(hk.Module):
@@ -31,7 +33,7 @@ class SimpleBackbone(hk.Module):
         super().__init__()
         self.multiplier = multiplier
 
-    def __call__(self, x):
+    def __call__(self, x, is_training=False):
         m = self.multiplier
 
         block1 = hk.Sequential([

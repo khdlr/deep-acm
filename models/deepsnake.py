@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import jax.scipy.ndimage as jnd
 import haiku as hk
 
-from .backbones import SimpleBackbone
+from .backbones import SimpleBackbone, ResNet50, SlimResNet50
 from . import nnutils as nn
 
 
@@ -19,12 +19,12 @@ def sample_at_vertices(vertices: jnp.ndarray, features: jnp.ndarray) -> jnp.ndar
 
 
 class SnakeHead(hk.Module):
-    def __init__(self, multiplier):
+    def __init__(self, channels):
         super().__init__()
-        self.multiplier = multiplier
+        self.channels = channels
 
     def __call__(self, vertices, feature_maps):
-        C = 8 * self.multiplier
+        C = self.channels
 
         blocks = hk.Sequential([
             hk.Conv1D(C, 3), nn.ReLU(),
@@ -35,7 +35,8 @@ class SnakeHead(hk.Module):
             hk.Conv1D(C, 3), nn.ReLU(),
         ], name='SnakeBlocks')
 
-        mk_offset = hk.Conv1D(2, 1, with_bias=False)
+        # Initialize offset predictors with 0 -> default to no change
+        mk_offset = hk.Conv1D(2, 1, with_bias=False, w_init=hk.initializers.Constant(0.0))
 
         features = []
         for feature_map in feature_maps:
@@ -50,25 +51,25 @@ class SnakeHead(hk.Module):
 
 
 class DeepSnake():
-    def __init__(self, multiplier=64, output_intermediates=False, iterations=5):
+    def __init__(self, multiplier=64, iterations=5):
         super().__init__()
-        self.output_intermediates = output_intermediates
+        # self.output_intermediates = output_intermediates
         self.multiplier = multiplier
         self.iterations = iterations
 
-    def __call__(self, imagery, initialization):
-        backbone = SimpleBackbone(self.multiplier)
-        head = SnakeHead(self.multiplier)
+    def __call__(self, imagery, initialization, is_training=False):
+        backbone = ResNet50()
+        head = SnakeHead(2048)
 
         vertices = initialization
-        feature_maps = backbone(imagery)
+        feature_maps = backbone(imagery, is_training)
 
         steps = []
         for _ in range(self.iterations):
             vertices = head(vertices, feature_maps)
             steps.append(vertices)
 
-        if self.output_intermediates:
-            return jnp.stack(steps, axis=1)
-        else:
+        if is_training:
             return vertices
+        else:
+            return jnp.stack(steps, axis=1)

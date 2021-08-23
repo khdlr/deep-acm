@@ -24,22 +24,24 @@ METRICS = dict(
     min_min = min_min_loss,
     dtw = DTW()
 )
+PATIENCE = 25
 
-def loss_fn(predictions, contours, epoch):
+def loss_fn(predictions, contours):
     return SoftDTW(gamma=0.01)(predictions, contours)
 
 
 class TrainingState(NamedTuple):
     params: hk.Params
+    model_state: hk.State
     opt_state: optax.OptState
     epoch: jnp.ndarray
 
 
-def calculate_loss(params, net, imagery, contours, epoch):
+def calculate_loss(params, model_state, net, imagery, contours, is_training):
     init_contours = jnp.roll(contours, 1, 0)
-    predictions = net.apply(params, imagery, init_contours)
-    loss = loss_fn(predictions, contours, epoch)
-    return loss
+    predictions, model_state = net.apply(params, model_state, imagery, init_contours, is_training)
+    loss = loss_fn(predictions, contours)
+    return loss, model_state
 
 
 def get_optimizer():
@@ -60,12 +62,15 @@ def train_step(state, key, net):
     imagery, contours = make_batch(key)
     _, optimizer = get_optimizer()
 
-    loss_closure = partial(calculate_loss, net=net, imagery=imagery, contours=contours, epoch=state.epoch)
-    loss, gradients = jax.value_and_grad(loss_closure)(state.params)
+    loss_closure = partial(calculate_loss,
+            model_state=state.model_state, net=net,
+            imagery=imagery, contours=contours, is_training=True)
+    (loss, new_model_state), gradients = jax.value_and_grad(loss_closure, has_aux=True)(state.params)
     updates, new_opt_state = optimizer(gradients, state.opt_state)
     new_params = optax.apply_updates(state.params, updates)
     return loss, TrainingState(
         params=new_params,
+        model_state=new_model_state,
         opt_state=new_opt_state,
         epoch=state.epoch
     )
@@ -75,9 +80,9 @@ def train_step(state, key, net):
 def val_step(state, key, net):
     imagery, contours = make_batch(key)
     init_contours = jnp.roll(contours, 1, 0)
-    predictions = net.apply(state.params, imagery, init_contours)
+    predictions, new_state = net.apply(state.params, state.model_state, imagery, init_contours, is_training=False)
     metrics = {}
-    metrics['loss'] = loss_fn(predictions[:, -1], contours, state.epoch)
+    metrics['loss'] = loss_fn(predictions[:, -1], contours)
     for m in METRICS:
         metrics[m] = METRICS[m](predictions[:, -1], contours)
 
@@ -93,6 +98,7 @@ def save_state(state, out_path):
 def set_epoch(state, epoch):
     return TrainingState(
         params=state.params,
+        model_state=state.model_state,
         opt_state=state.opt_state,
         epoch=epoch
     )
@@ -103,20 +109,19 @@ def main():
     persistent_val_key = jax.random.PRNGKey(27)
     multiplier = 64
 
-    net = DeepSnake(multiplier, output_intermediates=False, iterations=5)
-    val_net = DeepSnake(multiplier, output_intermediates=True, iterations=7)
-
-    net     = hk.without_apply_rng(hk.transform(net))
-    val_net = hk.without_apply_rng(hk.transform(val_net))
+    net     = DeepSnake(multiplier, iterations=5)
+    net     = hk.without_apply_rng(hk.transform_with_state(net))
 
     opt_init, _ = get_optimizer()
-    params = net.init(jax.random.PRNGKey(0), *make_batch(jax.random.PRNGKey(0)))
+    params, model_state = net.init(jax.random.PRNGKey(0), *make_batch(jax.random.PRNGKey(0)), is_training=True)
     opt_state = opt_init(params)
-    state = TrainingState(params=params, opt_state=opt_state, epoch=jnp.array(0))
+    state = TrainingState(params=params, model_state=model_state, opt_state=opt_state, epoch=jnp.array(0))
     wandb.init(project='Deep Snake Pre-Train')
 
     name = 'snake_head/conv1_d'
-    p = params[name]['w']
+
+    running_min = np.inf
+    last_improvement = 0
 
     for epoch in range(1, 201):
         prog = trange(1, 10001)
@@ -137,24 +142,35 @@ def main():
 
         # Save Checkpoint
         save_state(state, Path('checkpoints') / f'{wandb.run.id}-latest.npz')
-        if (epoch % 10 == 0):
-            save_state(state, Path('checkpoints') / f'{wandb.run.id}-{epoch}.npz')
 
         wandb.log({f'trn/loss': jnp.mean(loss_ary)}, step=epoch)
         # Validate
         val_key = persistent_val_key
         metrics = {m: [] for m in METRICS}
         metrics['loss'] = []
-        for step in range(3):
+        imgdata = []
+        for step in trange(64, desc='Logging Validation stuff'):
             val_key, subkey = jax.random.split(val_key)
-            current_metrics, *inspection = val_step(state, val_key, val_net)
+            current_metrics, *inspection = val_step(state, val_key, net)
             for m in current_metrics:
                 metrics[m].append(current_metrics[m])
 
-            for i in trange(4, desc='Logging Val Images'):
-                log_image(*[np.asarray(ary[i]) for ary in inspection], f"Val{step}-{i}", epoch)
-                log_video(*[np.asarray(ary[i]) for ary in inspection], f"ValAnim{step}-{i}", epoch)
+            if step % 4 == 0:
+                imgdata.append((*[np.asarray(ary[0]) for ary in inspection], f"Imgs/Val{step}", epoch))
+                log_image
+                log_video(*[np.asarray(ary[0]) for ary in inspection], f"Anim/Val{step}", epoch)
         wandb.log({f'val/{m}': np.mean(metrics[m]) for m in metrics}, step=epoch)
+        metric = metrics['loss']
+        if metric < running_min:
+            last_improvement = epoch
+            running_min = epoch
+            save_state(state, Path('checkpoints') / f'{wandb.run.id}-best.npz')
+            for data in imgdata:
+                log_image(*data)
+                log_video(*data)
+        if epoch - last_improvement > PATIENCE:
+            print(f'Stopping early because there was no improvement for {PATIENCE} epochs.')
+            break
 
 
 if __name__ == '__main__':
