@@ -1,18 +1,24 @@
+# Tried the following for more determinism. But it doesn't seem to help...
+# import os
+# os.environ['XLA_FLAGS'] = '--xla_gpu_deterministic_reductions'
+# os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
+import yaml
+from typing import NamedTuple, Mapping
+import pickle
+from pathlib import Path
+from functools import partial
+
 import numpy as np
 import jax
 import jax.numpy as jnp
 import haiku as hk
 import optax
 from generate_data import generate_image 
-from functools import partial
 
-from typing import NamedTuple, Mapping
 import wandb
-from tqdm import trange
-from pathlib import Path
-import pickle
+from tqdm import trange, tqdm
 
-from models.deepsnake import DeepSnake
+import models
 from loss_functions import l2_loss, min_min_loss, l1_loss, DTW, SoftDTW
 from plotting import log_image, log_video
 
@@ -82,9 +88,12 @@ def val_step(state, key, net):
     init_contours = jnp.roll(contours, 1, 0)
     predictions, new_state = net.apply(state.params, state.model_state, imagery, init_contours, is_training=False)
     metrics = {}
-    metrics['loss'] = loss_fn(predictions[:, -1], contours)
+    pred = predictions[-1]
+    if pred.shape != contours.shape:
+        pred = jax.image.resize(pred, contours.shape, 'linear')
+    metrics['loss'] = loss_fn(pred, contours)
     for m in METRICS:
-        metrics[m] = METRICS[m](predictions[:, -1], contours)
+        metrics[m] = METRICS[m](pred, contours)
 
     return metrics, imagery, contours, predictions, init_contours
 
@@ -109,22 +118,25 @@ def main():
     persistent_val_key = jax.random.PRNGKey(27)
     multiplier = 64
 
-    net     = DeepSnake(multiplier, iterations=5)
-    net     = hk.without_apply_rng(hk.transform_with_state(net))
+    config = yaml.load(open('config.yml'), Loader=yaml.SafeLoader)
+    modelclass = getattr(models, config['model'])
+    net = modelclass(backbone=config['backbone'], **config['head'])
+    net = hk.without_apply_rng(hk.transform_with_state(net))
 
     opt_init, _ = get_optimizer()
     params, model_state = net.init(jax.random.PRNGKey(0), *make_batch(jax.random.PRNGKey(0)), is_training=True)
     opt_state = opt_init(params)
     state = TrainingState(params=params, model_state=model_state, opt_state=opt_state, epoch=jnp.array(0))
-    wandb.init(project='Deep Snake Pre-Train')
 
     name = 'snake_head/conv1_d'
 
     running_min = np.inf
     last_improvement = 0
 
+    wandb.init(project='Deep Snake Pre-Train', config=config)
+
     for epoch in range(1, 201):
-        prog = trange(1, 10001)
+        prog = trange(1, 101)
         losses = []
         loss_ary = None
         state = set_epoch(state, epoch)
@@ -149,25 +161,27 @@ def main():
         metrics = {m: [] for m in METRICS}
         metrics['loss'] = []
         imgdata = []
-        for step in trange(64, desc='Logging Validation stuff'):
+        viddata = []
+        for step in trange(64, desc='Validation stuff'):
             val_key, subkey = jax.random.split(val_key)
             current_metrics, *inspection = val_step(state, val_key, net)
             for m in current_metrics:
                 metrics[m].append(current_metrics[m])
 
             if step % 4 == 0:
-                imgdata.append((*[np.asarray(ary[0]) for ary in inspection], f"Imgs/Val{step}", epoch))
-                log_image
-                log_video(*[np.asarray(ary[0]) for ary in inspection], f"Anim/Val{step}", epoch)
+                imagery, contours, predictions, init_contours = inspection
+                predictions = [p[0] for p in predictions]
+                imgdata.append((imagery[0], contours[0], predictions, init_contours[0], f"Imgs/Val{step}", epoch))
+                viddata.append((imagery[0], contours[0], predictions, init_contours[0], f"Anim/Val{step}", epoch))
         metrics = {m: np.mean(metrics[m]) for m in metrics}
         metric = metrics['loss']
         if metric < running_min:
             last_improvement = epoch
-            running_min = epoch
+            running_min = metric
             save_state(state, Path('checkpoints') / f'{wandb.run.id}-best.npz')
-            for data in imgdata:
-                log_image(*data)
-                log_video(*data)
+            for img, vid in tqdm(zip(imgdata, viddata), desc='Logging Media'):
+                log_image(*img)
+                log_video(*vid)
         if epoch - last_improvement > PATIENCE:
             print(f'Stopping early because there was no improvement for {PATIENCE} epochs.')
             break

@@ -7,12 +7,20 @@ from utils import pad_inf, fmt, distance_matrix
 
 
 def l2_loss(predictions, ground_truth):
+    if predictions.shape[1] < ground_truth.shape[1]:
+        predictions = jax.image.resize(predictions, ground_truth.shape, 'linear')
+    elif ground_truth.shape[1] < predictions.shape[1]:
+        ground_truth = jax.image.resize(ground_truth, predictions.shape, 'linear')
     loss = jnp.sum(jnp.square(predictions - ground_truth), axis=-1)
     loss = jnp.mean(loss)
     return loss
 
 
 def l1_loss(predictions, ground_truth):
+    if predictions.shape[1] < ground_truth.shape[1]:
+        predictions = jax.image.resize(predictions, ground_truth.shape, 'linear')
+    elif ground_truth.shape[1] < predictions.shape[1]:
+        ground_truth = jax.image.resize(ground_truth, predictions.shape, 'linear')
     loss = jnp.sum(jnp.abs(predictions - ground_truth), axis=-1)
     loss = jnp.mean(loss)
     return loss

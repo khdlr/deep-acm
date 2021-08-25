@@ -1,0 +1,9 @@
+backbone: ResNet18
+model: DeepSnake
+head:
+  subdivide: true
+  coord_features: true
+  width: 512
+  iterations: 5
+  weight_sharing: true
+loss_function: SDTW
