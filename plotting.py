@@ -63,9 +63,12 @@ def log_video(img, truth, preds, init, tag, step):
             pred0 = jax.image.resize(pred0, pred1.shape, 'linear')
         lerped_preds += list( (1-t) * pred0 + t * pred1 )
 
+    base = Image.fromarray(img, mode='RGB')
+    draw = ImageDraw.Draw(base)
+    draw_snake(draw, truth, fill=(255, 0, 0), width=2)
     frames = []
     for pred in lerped_preds:
-        frame = Image.fromarray(img, mode='RGB')
+        frame = base.copy()
         draw = ImageDraw.Draw(frame)
         draw_snake(draw, pred, fill=(0, 255, 0), width=2)
         frames.append(np.asarray(frame).astype(np.uint8))

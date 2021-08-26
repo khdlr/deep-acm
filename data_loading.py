@@ -18,22 +18,24 @@ def md5(obj):
 
 def _isval(gt_path):
     year = int(gt_path.stem[:4])
-
     return year >= 2020
 
 
 class DeterministicShuffle(torch.utils.data.Sampler):
-    def __init__(self, length, rng_key):
+    def __init__(self, length, rng_key, repetitions=10):
         self.rng_key = rng_key
         self.length = length
+        self.repetitions = repetitions
 
     def __iter__(self):
-        self.rng_key, subkey = jax.random.split(self.rng_key)
-        permutation = jax.random.permutation(subkey, self.length)
-        return permutation.__iter__()
+        self.rng_key, *subkeys = jax.random.split(self.rng_key, self.repetitions+1)
+        permutations = jnp.concatenate([
+            jax.random.permutation(subkey, self.length) for subkey in subkeys
+        ])
+        return permutations.__iter__()
 
     def __len__(self):
-        return self.length
+        return self.length * self.repetitions
 
 
 def numpy_collate(batch):
@@ -84,11 +86,11 @@ def snakify(gt, vertices):
 class UC1SnakeDataset(torch.utils.data.Dataset):
     def __init__(self, mode='train'):
         super().__init__()
-        self.config = yaml.load(open('data_config.yml'), Loader=yaml.SafeLoader)
+        self.config = yaml.load(open('config.yml'), Loader=yaml.SafeLoader)
         self.root = Path(self.config['data_root'])
         self.cachedir = self.root.parent / 'cache'
         self.cachedir.mkdir(exist_ok=True)
-        self.confighash = md5(self.config['bands'])
+        self.confighash = md5((self.config['bands'], self.config['data_size']))
 
         self.gts = sorted(list(self.root.glob('ground_truth/*/*/*_30m.tif')))
         if mode == 'train':
@@ -123,7 +125,8 @@ class UC1SnakeDataset(torch.utils.data.Dataset):
             for band in self.config['bands']:
                 try:
                     with rio.open(ref_root / f'{band}.tif') as raster:
-                        ref.append(raster.read(1).astype(np.uint8))
+                        H = self.config['data_size']
+                        ref.append(jax.image.resize(raster.read(1), (H, H), 'linear').astype(np.uint8))
                 except rio.errors.RasterioIOError:
                     print(f'RasterioIOError when opening {ref_root}/{band}.tif')
                     return None
