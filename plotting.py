@@ -46,7 +46,7 @@ def log_image(img, truth, preds, init, tag, step):
 
 
 def log_video(img, truth, preds, init, tag, step):
-    img = np.asarray(jax.image.resize(img, (256, 256, 1), method='linear') > 0.5)
+    img = np.asarray(jax.image.resize(img, (256, 256, 1), method='linear'))
     RGB = [0, 0, 0]
     img = img[:, :, RGB]
     img = (255 * img[:,:,RGB]).astype(np.uint8)

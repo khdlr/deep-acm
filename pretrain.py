@@ -3,19 +3,20 @@
 # os.environ['XLA_FLAGS'] = '--xla_gpu_deterministic_reductions'
 # os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
 import yaml
-from typing import NamedTuple
+from typing import NamedTuple, Mapping
 import pickle
 from pathlib import Path
+from functools import partial
 
 import numpy as np
 import jax
 import jax.numpy as jnp
 import haiku as hk
 import optax
-from data_loading import get_loader 
+from generate_data import generate_image 
 
 import wandb
-from tqdm import tqdm
+from tqdm import trange, tqdm
 
 import models
 from loss_functions import l2_loss, min_min_loss, l1_loss, DTW, SoftDTW
@@ -57,13 +58,17 @@ def get_optimizer():
     return optimizer
 
 
-@jax.partial(jax.jit, static_argnums=3)
-def train_step(batch, state, key, net):
-    imagery, contours = batch
-    # TODO: Augment
+def make_batch(key):
+    data_keys = jax.random.split(key, BATCH_SIZE)
+    return jax.vmap(generate_image)(data_keys)
+
+
+@jax.partial(jax.jit, static_argnums=2)
+def train_step(state, key, net):
+    imagery, contours = make_batch(key)
     _, optimizer = get_optimizer()
 
-    loss_closure = jax.partial(calculate_loss,
+    loss_closure = partial(calculate_loss,
             model_state=state.model_state, net=net,
             imagery=imagery, contours=contours, is_training=True)
     (loss, new_model_state), gradients = jax.value_and_grad(loss_closure, has_aux=True)(state.params)
@@ -77,9 +82,9 @@ def train_step(batch, state, key, net):
     )
 
 
-@jax.partial(jax.jit, static_argnums=3)
-def val_step(batch, state, key, net):
-    imagery, contours = batch
+@jax.partial(jax.jit, static_argnums=2)
+def val_step(state, key, net):
+    imagery, contours = make_batch(key)
     init_contours = jnp.roll(contours, 1, 0)
     predictions, new_state = net.apply(state.params, state.model_state, imagery, init_contours, is_training=False)
     metrics = {}
@@ -118,30 +123,26 @@ def main():
     net = modelclass(backbone=config['backbone'], **config['head'])
     net = hk.without_apply_rng(hk.transform_with_state(net))
 
-    # initialize data loading
-    train_key, subkey = jax.random.split(train_key)
-    train_loader = get_loader(BATCH_SIZE, 4, 'train', subkey)
-    val_loader   = get_loader(BATCH_SIZE, 4, 'val', None)
-
-    # Initialize model and optimizer state
     opt_init, _ = get_optimizer()
-    params, model_state = net.init(jax.random.PRNGKey(0), *next(iter(train_loader)), is_training=True)
+    params, model_state = net.init(jax.random.PRNGKey(0), *make_batch(jax.random.PRNGKey(0)), is_training=True)
     opt_state = opt_init(params)
     state = TrainingState(params=params, model_state=model_state, opt_state=opt_state, epoch=jnp.array(0))
+
+    name = 'snake_head/conv1_d'
 
     running_min = np.inf
     last_improvement = 0
 
-    wandb.init(project='Deep Snake', config=config)
+    wandb.init(project='Deep Snake Pre-Train', config=config)
 
     for epoch in range(1, 201):
-        prog = tqdm(train_loader, desc=f'Ep {epoch} Trn')
+        prog = trange(1, 101)
         losses = []
         loss_ary = None
         state = set_epoch(state, epoch)
-        for step, batch in enumerate(prog, 1):
+        for step in prog:
             train_key, subkey = jax.random.split(train_key)
-            loss, state = train_step(batch, state, subkey, net)
+            loss, state = train_step(state, subkey, net)
             losses.append(loss)
             if step % 100 == 0:
                 if loss_ary is None:
@@ -149,21 +150,21 @@ def main():
                 else:
                     loss_ary = jnp.concatenate([loss_ary, jnp.stack(losses)])
                 losses = []
-                prog.set_description(f'{np.mean(loss_ary):.3f}')
+                prog.set_description(f'{jnp.mean(loss_ary):.3f}')
 
         # Save Checkpoint
         save_state(state, Path('checkpoints') / f'{wandb.run.id}-latest.npz')
 
-        wandb.log({f'trn/loss': np.mean(loss_ary)}, step=epoch)
+        wandb.log({f'trn/loss': jnp.mean(loss_ary)}, step=epoch)
         # Validate
         val_key = persistent_val_key
         metrics = {m: [] for m in METRICS}
         metrics['loss'] = []
         imgdata = []
         viddata = []
-        for step, batch in enumerate(tqdm(val_loader, desc=f'Ep {epoch} Val')):
+        for step in trange(64, desc='Validation stuff'):
             val_key, subkey = jax.random.split(val_key)
-            current_metrics, *inspection = val_step(batch, state, val_key, net)
+            current_metrics, *inspection = val_step(state, val_key, net)
             for m in current_metrics:
                 metrics[m].append(current_metrics[m])
 

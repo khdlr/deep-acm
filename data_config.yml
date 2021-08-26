@@ -1,0 +1,4 @@
+data_root: '../uc1/data'
+bands:
+  - SPECTRAL/BANDS/NORM_B8_8b
+vertices: 65
