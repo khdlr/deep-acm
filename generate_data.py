@@ -71,7 +71,7 @@ def generate_image(key: jnp.array) -> Tuple[jnp.array, jnp.array]:
         polyline[:1]
     ], axis=0)
 
-    coords = jnp.linspace(-1, 1, 128)
+    coords = jnp.linspace(-1, 1, 512)
     image = fill_scanline(polyring, coords, coords)
     image = jnp.expand_dims(image, -1).astype(jnp.float32)
 

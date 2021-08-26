@@ -6,7 +6,6 @@ import yaml
 from typing import NamedTuple, Mapping
 import pickle
 from pathlib import Path
-from functools import partial
 
 import numpy as np
 import jax
@@ -19,21 +18,22 @@ import wandb
 from tqdm import trange, tqdm
 
 import models
-from loss_functions import l2_loss, min_min_loss, l1_loss, DTW, SoftDTW
+import loss_functions
 from plotting import log_image, log_video
 
 
 BATCH_SIZE = 16
 METRICS = dict(
-    l1 = l1_loss,
-    l2 = l2_loss,
-    min_min = min_min_loss,
-    dtw = DTW()
+    l1 = loss_functions.l1_loss,
+    l2 = loss_functions.l2_loss,
+    min_min = loss_functions.min_min_loss,
+    dtw = loss_functions.DTW(),
+    forward_mae = loss_functions.forward_mae,
+    backward_mae = loss_functions.backward_mae,
+    forward_rmse = loss_functions.forward_rmse,
+    backward_rmse = loss_functions.backward_rmse,
 )
 PATIENCE = 25
-
-def loss_fn(predictions, contours):
-    return SoftDTW(gamma=0.01)(predictions, contours)
 
 
 class TrainingState(NamedTuple):
@@ -46,7 +46,7 @@ class TrainingState(NamedTuple):
 def calculate_loss(params, model_state, net, imagery, contours, is_training):
     init_contours = jnp.roll(contours, 1, 0)
     predictions, model_state = net.apply(params, model_state, imagery, init_contours, is_training)
-    loss = loss_fn(predictions, contours)
+    loss = jnp.mean(jax.vmap(loss_fn)(predictions, contours))
     return loss, model_state
 
 
@@ -68,7 +68,7 @@ def train_step(state, key, net):
     imagery, contours = make_batch(key)
     _, optimizer = get_optimizer()
 
-    loss_closure = partial(calculate_loss,
+    loss_closure = jax.partial(calculate_loss,
             model_state=state.model_state, net=net,
             imagery=imagery, contours=contours, is_training=True)
     (loss, new_model_state), gradients = jax.value_and_grad(loss_closure, has_aux=True)(state.params)
@@ -91,9 +91,9 @@ def val_step(state, key, net):
     pred = predictions[-1]
     if pred.shape != contours.shape:
         pred = jax.image.resize(pred, contours.shape, 'linear')
-    metrics['loss'] = loss_fn(pred, contours)
+    metrics['loss'] = jnp.mean(jax.vmap(loss_fn)(pred, contours))
     for m in METRICS:
-        metrics[m] = METRICS[m](pred, contours)
+        metrics[m] = jnp.mean(jax.vmap(METRICS[m])(pred, contours))
 
     return metrics, imagery, contours, predictions, init_contours
 
@@ -113,12 +113,21 @@ def set_epoch(state, epoch):
     )
 
 
-def main():
+if __name__ == '__main__':
     train_key = jax.random.PRNGKey(42)
     persistent_val_key = jax.random.PRNGKey(27)
     multiplier = 64
 
     config = yaml.load(open('pretrain_config.yml'), Loader=yaml.SafeLoader)
+    lf = config['loss_function']
+    if lf.startswith('SoftDTW'):
+        gamma = float(lf[8:-1])
+        loss_fn = loss_functions.SoftDTW(gamma=gamma)
+    elif lf == 'DTW':
+        loss_fn = loss_functions.DTW()
+    else:
+        loss_fn = getattr(loss_functions, lf)
+
     modelclass = getattr(models, config['model'])
     net = modelclass(backbone=config['backbone'], **config['head'])
     net = hk.without_apply_rng(hk.transform_with_state(net))
@@ -136,7 +145,7 @@ def main():
     wandb.init(project='Deep Snake Pre-Train', config=config)
 
     for epoch in range(1, 201):
-        prog = trange(1, 101)
+        prog = trange(1, 10001)
         losses = []
         loss_ary = None
         state = set_epoch(state, epoch)
@@ -188,7 +197,3 @@ def main():
         metrics['best_loss'] = running_min
 
         wandb.log({f'val/{m}': metrics[m] for m in metrics}, step=epoch)
-
-
-if __name__ == '__main__':
-    main()
