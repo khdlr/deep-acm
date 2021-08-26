@@ -118,7 +118,7 @@ def main():
     persistent_val_key = jax.random.PRNGKey(27)
     multiplier = 64
 
-    config = yaml.load(open('config.yml'), Loader=yaml.SafeLoader)
+    config = yaml.load(open('pretrain_config.yml'), Loader=yaml.SafeLoader)
     modelclass = getattr(models, config['model'])
     net = modelclass(backbone=config['backbone'], **config['head'])
     net = hk.without_apply_rng(hk.transform_with_state(net))
