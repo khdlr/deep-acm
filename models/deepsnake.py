@@ -24,7 +24,7 @@ class DeepSnake():
             vertices = jnp.zeros([imagery.shape[0], 3, 2])
         else:
             vertices = initialization
-        steps = [initialization]
+        steps = [vertices]
 
         if self.weight_sharing:
             _head = SnakeHead(self.width, self.coord_features)
