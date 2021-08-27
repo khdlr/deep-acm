@@ -9,8 +9,10 @@ head:
   width: 512
   iterations: 5
 loss_function: SoftDTW(0.001)
-data_root: '../aicore/uc1/data'
+data_root: '../uc1/data'
 data_size: 128
 bands:
-  - SPECTRAL/BANDS/NORM_B8_8b
+  - SPECTRAL/BANDS/NORM_B2_8b
+  - SPECTRAL/BANDS/NORM_B3_8b
+  - SPECTRAL/BANDS/NORM_B4_8b
 vertices: 65

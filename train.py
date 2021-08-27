@@ -17,6 +17,10 @@ from data_loading import get_loader
 import wandb
 from tqdm import tqdm
 
+import sys
+sys.path.append('augmax')
+import augmax
+
 import models
 import loss_functions
 from plotting import log_image, log_video
@@ -68,6 +72,24 @@ def calculate_loss(params, fixed_params, model_state, net, imagery, contours, is
     return loss, model_state
 
 
+def augmentation_pipeline(key, batch):
+    D = config['data_size']
+    chain = augmax.Chain(
+        augmax.Resize(D, D),
+        augmax.HorizontalFlip(),
+        augmax.VerticalFlip(),
+        augmax.Rotate(15),
+        augmax.Warp(coarseness=16),
+        augmax.ByteToFloat(),
+        augmax.ColorJitter(p=1.0),
+        augmax.Solarization(p=0.1),
+        input_types=[augmax.InputType.IMAGE, augmax.InputType.CONTOUR]
+    )
+    transformation = jax.vmap(chain)
+    keys = jax.random.split(key, batch[0].shape[0])
+    return transformation(keys, *batch)
+
+
 def get_optimizer():
     optimizer = optax.chain(
       optax.clip_by_global_norm(0.25),
@@ -78,8 +100,8 @@ def get_optimizer():
 
 @jax.partial(jax.jit, static_argnums=3)
 def train_step(batch, state, key, net):
-    imagery, contours = batch
-    # TODO: Augment
+    imagery, contours = augmentation_pipeline(key, batch)
+    contours = 2 * (contours / imagery.shape[1]) + 1.0
     _, optimizer = get_optimizer()
 
     loss_closure = jax.partial(calculate_loss,
@@ -99,6 +121,7 @@ def train_step(batch, state, key, net):
 @jax.partial(jax.jit, static_argnums=3)
 def val_step(batch, state, key, net):
     imagery, contours = batch
+    contours = 2 * (contours / imagery.shape[1]) + 1.0
     init_contours = jnp.roll(contours, 1, 0)
     full_params = hk.data_structures.merge(state.params, state.fixed_params)
     predictions, new_state = net.apply(full_params, state.model_state, imagery, init_contours, is_training=False)
@@ -163,8 +186,8 @@ if __name__ == '__main__':
 
     # initialize data loading
     train_key, subkey = jax.random.split(train_key)
-    train_loader = get_loader(BATCH_SIZE, 0, 'train', subkey)
-    val_loader   = get_loader(BATCH_SIZE, 0, 'val', None)
+    train_loader = get_loader(BATCH_SIZE, 4, 'train', subkey)
+    val_loader   = get_loader(BATCH_SIZE, 4, 'val', None)
 
     # Initialize model and optimizer state
     opt_init, _ = get_optimizer()

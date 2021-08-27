@@ -72,7 +72,7 @@ def snakify(gt, vertices):
         return empty
 
     contour = max(contours, key=lambda x: x.shape[0])
-    contour = (2. * contour.astype(np.float32) / gt.shape[0] - 1.).astype(np.float32)
+    contour = contour.astype(np.float32)
     contour = contour.view(np.complex64)[:, 0]
     C_space = np.linspace(0, 1, len(contour), dtype=np.float32)
     S_space = np.linspace(0, 1, vertices, dtype=np.float32)
@@ -125,14 +125,14 @@ class UC1SnakeDataset(torch.utils.data.Dataset):
             for band in self.config['bands']:
                 try:
                     with rio.open(ref_root / f'{band}.tif') as raster:
-                        H = self.config['data_size']
-                        ref.append(jax.image.resize(raster.read(1), (H, H), 'linear').astype(np.uint8))
+                        b = raster.read(1)
+                        # b = jax.image.resize(b, (H, H), 'linear').astype(np.uint8))
+                        ref.append(b)
                 except rio.errors.RasterioIOError:
                     print(f'RasterioIOError when opening {ref_root}/{band}.tif')
                     return None
             ref = np.stack(ref, axis=-1).astype(np.float32)
             jnp.save(ref_cache, ref)
-        ref = ref.astype(np.float32) / 255
 
         return ref, snake
 
