@@ -133,7 +133,12 @@ def dict_merge(old, update):
 def split_params(params, split_mode):
     predicate = lambda m, n, p: True
     if split_mode == 'head':
-        predicate = lambda m, n, p: print(m, n, not m.startswith('snake_head')) or not m.startswith('snake_head')
+        predicate = lambda m, n, p: not m.startswith('snake_head')
+    elif split_mode == 'none':
+        predicate = lambda m, n, p: True
+    else:
+        raise ValueError("TODO")
+
     return hk.data_structures.partition(predicate, params)
 
 
