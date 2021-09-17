@@ -9,6 +9,8 @@ import rasterio as rio
 from pathlib import Path
 from skimage.measure import find_contours
 import yaml
+import blosc
+from tqdm import tqdm
 
 
 def md5(obj):
@@ -22,7 +24,7 @@ def _isval(gt_path):
 
 
 class DeterministicShuffle(torch.utils.data.Sampler):
-    def __init__(self, length, rng_key, repetitions=10):
+    def __init__(self, length, rng_key, repetitions=50):
         self.rng_key = rng_key
         self.length = length
         self.repetitions = repetitions
@@ -56,7 +58,8 @@ def get_loader(batch_size, data_threads, mode, rng_key):
     kwargs = dict(
         batch_size = batch_size,
         num_workers = data_threads,
-        collate_fn = numpy_collate
+        collate_fn = numpy_collate,
+        drop_last = True
     )
     if mode == 'train':
         kwargs['sampler'] = DeterministicShuffle(len(data), rng_key)
@@ -68,7 +71,7 @@ def snakify(gt, vertices):
     contours = find_contours(gt, 0.5)
     # Select the longest contour
     if len(contours) == 0:
-        empty = 0.5 * jnp.ones([vertices, 2], np.float32)
+        empty = 0.0 * np.zeros([vertices, 2], np.float32)
         return empty
 
     contour = max(contours, key=lambda x: x.shape[0])
@@ -80,7 +83,19 @@ def snakify(gt, vertices):
     snake = np.interp(S_space, C_space, contour)
     snake = snake[:, np.newaxis].view(np.float64).astype(np.float32)
 
+    snake = snake / gt.shape[1]
+
     return snake
+
+
+def save(path, ary):
+    with open(path, 'wb') as f:
+        f.write(blosc.pack_array(ary, cname='zlib'))
+
+def load(path):
+    with open(path, 'rb') as f:
+        return blosc.unpack_array(f.read())
+
 
 
 class UC1SnakeDataset(torch.utils.data.Dataset):
@@ -98,42 +113,71 @@ class UC1SnakeDataset(torch.utils.data.Dataset):
         else:
             self.gts = [g for g in self.gts if _isval(g)]
 
-    def __getitem__(self, idx):
+        self.ref_cache_path = self.cachedir / f'{mode}_ref_{self.confighash}.npy'
+        self.snake_cache_path = self.cachedir / f'{mode}_snakes_{self.confighash}.npy'
+
+        self.assert_cache()
+
+    def assert_cache(self):
+        snake_args = dict(
+            filename=str(self.snake_cache_path),
+            dtype=np.float32,
+            shape=(len(self.gts), self.config['vertices'], 2)
+        )
+
+        if not self.snake_cache_path.exists():
+            cache = np.memmap(**snake_args, mode='w+')
+            for i in tqdm(range(len(self.gts)), desc='Building Snake Cache'):
+                cache[i] = self.loadsnake(i) * self.config['data_size']
+            cache.flush()
+        self.snake_cache = np.memmap(**snake_args, mode='r')
+
+        ref_args = dict(
+            filename=self.ref_cache_path,
+            dtype=np.uint8,
+            shape=(len(self.gts), self.config['data_size'], self.config['data_size'], len(self.config['bands']))
+        )
+
+        if not self.ref_cache_path.exists():
+            cache = np.memmap(**ref_args, mode='w+')
+            for i in tqdm(range(len(self.gts)), desc='Building Ref Cache'):
+                cache[i] = self.loadref(i)
+            cache.flush()
+        self.ref_cache = np.memmap(**ref_args, mode='r')
+
+    def loadsnake(self, idx):
         path = self.gts[idx]
         *_, site, date, gtname = path.parts
-        snake_cache = self.cachedir / f'{site}_{date}_snake.npy'
-        ref_cache = self.cachedir / f'{site}_{date}_ref_{self.confighash}.npy'
 
-        if snake_cache.exists():
-            snake = np.load(snake_cache)
-        else:
-            with rio.open(path) as raster:
-                gt = raster.read(1)
-            snake = snakify(gt, self.config['vertices'])
-            jnp.save(snake_cache, snake)
-        snake = snake.astype(np.float32)
+        with rio.open(path) as raster:
+            gt = raster.read(1)
+        snake = snakify(gt, self.config['vertices'])
+        return snake
 
-        if ref_cache.exists():
+    def loadref(self, idx):
+        path = self.gts[idx]
+        *_, site, date, gtname = path.parts
+        ref_root = self.root / 'reference_data' / site / date / '30m'
+
+        ref = []
+        for band in self.config['bands']:
             try:
-                ref = np.load(ref_cache)
-            except:
-                print(f"Failed loading {ref_cache}")
-        else:
-            ref_root = self.root / 'reference_data' / site / date / '30m'
+                with rio.open(ref_root / f'{band}.tif') as raster:
+                    b = raster.read(1).astype(np.uint8)
+                    ref.append(b)
+            except rio.errors.RasterioIOError:
+                print(f'RasterioIOError when opening {ref_root}/{band}.tif')
+                return None
+        ref = jnp.stack(ref, axis=-1)
+        ref = jax.image.resize(ref,
+            [self.config['data_size'], self.config['data_size'], ref.shape[2]],
+            "linear"
+        ).astype(np.uint8)
+        return ref
 
-            ref = []
-            for band in self.config['bands']:
-                try:
-                    with rio.open(ref_root / f'{band}.tif') as raster:
-                        b = raster.read(1)
-                        # b = jax.image.resize(b, (H, H), 'linear').astype(np.uint8))
-                        ref.append(b)
-                except rio.errors.RasterioIOError:
-                    print(f'RasterioIOError when opening {ref_root}/{band}.tif')
-                    return None
-            ref = np.stack(ref, axis=-1).astype(np.float32)
-            jnp.save(ref_cache, ref)
-
+    def __getitem__(self, idx):
+        snake = self.snake_cache[idx]
+        ref = self.ref_cache[idx]
         return ref, snake
 
     def __len__(self):
@@ -142,4 +186,5 @@ class UC1SnakeDataset(torch.utils.data.Dataset):
 
 if __name__ == '__main__':
     ds = UC1SnakeDataset('train')
-    a = ds[0]
+    for a in tqdm(ds):
+        pass

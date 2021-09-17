@@ -72,22 +72,39 @@ def calculate_loss(params, fixed_params, model_state, net, imagery, contours, is
     return loss, model_state
 
 
+def preparation_pipeline(batch):
+    D = config['data_size']
+    key = jax.random.PRNGKey(0)
+    chain = augmax.Chain(
+        # augmax.Resize(D, D),
+        augmax.ByteToFloat(),
+        input_types=[augmax.InputType.IMAGE, augmax.InputType.CONTOUR]
+    )
+    transformation = jax.vmap(chain, in_axes=[None, 0, 0])
+    image, contours = transformation(key, *batch)
+    contours = 2 * (contours / image.shape[1]) - 1.0
+    return image, contours
+
+
 def augmentation_pipeline(key, batch):
     D = config['data_size']
     chain = augmax.Chain(
-        augmax.Resize(D, D),
+        # augmax.Resize(D, D),
         augmax.HorizontalFlip(),
         augmax.VerticalFlip(),
+        augmax.Rotate90(),
         augmax.Rotate(15),
         augmax.Warp(coarseness=16),
         augmax.ByteToFloat(),
-        augmax.ColorJitter(p=1.0),
+        augmax.ChannelShuffle(p=0.1),
         augmax.Solarization(p=0.1),
         input_types=[augmax.InputType.IMAGE, augmax.InputType.CONTOUR]
     )
     transformation = jax.vmap(chain)
     keys = jax.random.split(key, batch[0].shape[0])
-    return transformation(keys, *batch)
+    image, contours = transformation(keys, *batch)
+    contours = 2 * (contours / image.shape[1]) - 1.0
+    return image, contours
 
 
 def get_optimizer():
@@ -101,7 +118,6 @@ def get_optimizer():
 @jax.partial(jax.jit, static_argnums=3)
 def train_step(batch, state, key, net):
     imagery, contours = augmentation_pipeline(key, batch)
-    contours = 2 * (contours / imagery.shape[1]) + 1.0
     _, optimizer = get_optimizer()
 
     loss_closure = jax.partial(calculate_loss,
@@ -120,8 +136,7 @@ def train_step(batch, state, key, net):
 
 @jax.partial(jax.jit, static_argnums=3)
 def val_step(batch, state, key, net):
-    imagery, contours = batch
-    contours = 2 * (contours / imagery.shape[1]) + 1.0
+    imagery, contours = preparation_pipeline(batch)
     init_contours = jnp.roll(contours, 1, 0)
     full_params = hk.data_structures.merge(state.params, state.fixed_params)
     predictions, new_state = net.apply(full_params, state.model_state, imagery, init_contours, is_training=False)
@@ -186,12 +201,13 @@ if __name__ == '__main__':
 
     # initialize data loading
     train_key, subkey = jax.random.split(train_key)
-    train_loader = get_loader(BATCH_SIZE, 4, 'train', subkey)
-    val_loader   = get_loader(BATCH_SIZE, 4, 'val', None)
+    train_loader = get_loader(BATCH_SIZE, 0, 'train', subkey)
+    val_loader   = get_loader(BATCH_SIZE, 0, 'val', None)
 
     # Initialize model and optimizer state
     opt_init, _ = get_optimizer()
-    params, model_state = net.init(jax.random.PRNGKey(0), *next(iter(train_loader)), is_training=True)
+    params, model_state = net.init(jax.random.PRNGKey(0),
+            *preparation_pipeline(next(iter(train_loader))), is_training=True)
     params, fixed_params = split_params(params, config['fixed_weights'])
     opt_state = opt_init(params)
 
@@ -208,13 +224,19 @@ if __name__ == '__main__':
     wandb.init(project='Deep Snake', config=config)
 
     for epoch in range(1, 201):
+        wandb.log({f'epoch': epoch}, step=epoch)
         prog = tqdm(train_loader, desc=f'Ep {epoch} Trn')
         losses = []
         loss_ary = None
         for step, batch in enumerate(prog, 1):
+            # if epoch == 1 and step == 100:
+            #     jax.profiler.start_trace("tensorboard/train")
             train_key, subkey = jax.random.split(train_key)
             loss, state = train_step(batch, state, subkey, net)
             losses.append(loss)
+            # if epoch == 1 and step == 105:
+            #     loss.block_until_ready()
+            #     jax.profiler.stop_trace()
             if step % 100 == 0 or step == len(prog):
                 if loss_ary is None:
                     loss_ary = jnp.stack(losses)
@@ -225,8 +247,8 @@ if __name__ == '__main__':
 
         # Save Checkpoint
         save_state(state, Path('checkpoints') / f'{wandb.run.id}-latest.npz')
-
         wandb.log({f'trn/loss': np.mean(loss_ary)}, step=epoch)
+
         # Validate
         val_key = persistent_val_key
         metrics = {m: [] for m in METRICS}

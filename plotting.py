@@ -20,13 +20,13 @@ def draw_snake(draw, snake, dashed=False, **kwargs):
 
 def log_image(img, truth, preds, init, tag, step):
     H, W, C = img.shape
+
     img = np.asarray(jax.image.resize(img, (512, 512, C), method='linear'))
-    if C == 3:
-        RGB = [2, 1, 0]
-    elif C == 1:
+    RGB = [2, 1, 0]
+    if C == 1:
         RGB = [0, 0, 0]
     img = img[:, :, RGB]
-    img = (255 * img[:,:,RGB]).astype(np.uint8)
+    img = (255 * img[:,:, RGB]).astype(np.uint8)
 
     H, W, C = img.shape
     truth = 0.5 * H * (1 + truth)
@@ -51,10 +51,9 @@ def log_image(img, truth, preds, init, tag, step):
 
 def log_video(img, truth, preds, init, tag, step):
     H, W, C = img.shape
-    img = np.asarray(jax.image.resize(img, (256, 256, 1), method='linear'))
-    if C == 3:
-        RGB = [2, 1, 0]
-    elif C == 1:
+    img = np.asarray(jax.image.resize(img, (256, 256, C), method='linear'))
+    RGB = [2, 1, 0]
+    if C == 1:
         RGB = [0, 0, 0]
     img = img[:, :, RGB]
     img = (255 * img[:,:, RGB]).astype(np.uint8)
@@ -65,7 +64,7 @@ def log_video(img, truth, preds, init, tag, step):
     preds = [0.5 * H * (1 + p) for p in preds]
 
     lerped_preds = []
-    t = jnp.linspace(0, 1, 30).reshape(-1, 1, 1)
+    t = jnp.linspace(0, 1, 20).reshape(-1, 1, 1)
     for pred0, pred1 in zip(preds, preds[1:]):
         if pred0.shape != pred1.shape:
             pred0 = jax.image.resize(pred0, pred1.shape, 'linear')
@@ -82,11 +81,11 @@ def log_video(img, truth, preds, init, tag, step):
         frames.append(np.asarray(frame).astype(np.uint8))
 
     # Freeze-frame the last step
-    for i in range(30):
+    for i in range(20):
         frames.append(frames[-1])
 
     frames = jnp.stack(frames)
     frames = rearrange(frames, 't h w c -> t c h w')
     frames = np.asarray(frames)
 
-    wandb.log({tag: wandb.Video(frames, fps=30, format='gif')}, step=step)
+    wandb.log({tag: wandb.Video(frames, fps=20, format='gif')}, step=step)
