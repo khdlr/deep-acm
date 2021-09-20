@@ -42,7 +42,7 @@ def subdivide_and_noise(line, key):
     return all_points
 
 
-def generate_image(key: jnp.array) -> Tuple[jnp.array, jnp.array]:
+def generate_image(key: jnp.array, size) -> Tuple[jnp.array, jnp.array]:
     key, k_theta1, k_theta2, k_center = jax.random.split(key, 4)
     theta1 = jax.random.uniform(k_theta1, (), minval=0.0, maxval=2*jnp.pi)
     theta2 = jax.random.uniform(k_theta2, (), minval=theta1+np.deg2rad(30), maxval=theta1+np.deg2rad(360-30))
@@ -71,7 +71,7 @@ def generate_image(key: jnp.array) -> Tuple[jnp.array, jnp.array]:
         polyline[:1]
     ], axis=0)
 
-    coords = jnp.linspace(-1, 1, 512)
+    coords = jnp.linspace(-1, 1, size)
     image = fill_scanline(polyring, coords, coords)
     image = jnp.expand_dims(image, -1).astype(jnp.float32)
 

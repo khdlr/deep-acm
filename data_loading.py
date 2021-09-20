@@ -9,7 +9,6 @@ import rasterio as rio
 from pathlib import Path
 from skimage.measure import find_contours
 import yaml
-import blosc
 from tqdm import tqdm
 
 
@@ -88,16 +87,6 @@ def snakify(gt, vertices):
     return snake
 
 
-def save(path, ary):
-    with open(path, 'wb') as f:
-        f.write(blosc.pack_array(ary, cname='zlib'))
-
-def load(path):
-    with open(path, 'rb') as f:
-        return blosc.unpack_array(f.read())
-
-
-
 class UC1SnakeDataset(torch.utils.data.Dataset):
     def __init__(self, mode='train'):
         super().__init__()
@@ -105,7 +94,7 @@ class UC1SnakeDataset(torch.utils.data.Dataset):
         self.root = Path(self.config['data_root'])
         self.cachedir = self.root.parent / 'cache'
         self.cachedir.mkdir(exist_ok=True)
-        self.confighash = md5((self.config['bands'], self.config['data_size']))
+        self.confighash = md5((self.config['bands'], self.config['data_size'], self.config['vertices']))
 
         self.gts = sorted(list(self.root.glob('ground_truth/*/*/*_30m.tif')))
         if mode == 'train':
@@ -113,8 +102,9 @@ class UC1SnakeDataset(torch.utils.data.Dataset):
         else:
             self.gts = [g for g in self.gts if _isval(g)]
 
-        self.ref_cache_path = self.cachedir / f'{mode}_ref_{self.confighash}.npy'
-        self.snake_cache_path = self.cachedir / f'{mode}_snakes_{self.confighash}.npy'
+        self.ref_cache_path   = self.cachedir / f'{mode}_{self.confighash}_ref.npy'
+        self.mask_cache_path  = self.cachedir / f'{mode}_{self.confighash}_mask.npy'
+        self.snake_cache_path = self.cachedir / f'{mode}_{self.confighash}_snake.npy'
 
         self.assert_cache()
 
@@ -124,13 +114,23 @@ class UC1SnakeDataset(torch.utils.data.Dataset):
             dtype=np.float32,
             shape=(len(self.gts), self.config['vertices'], 2)
         )
+        mask_args = dict(
+            filename=str(self.mask_cache_path),
+            dtype=np.uint8,
+            shape=(len(self.gts), self.config['data_size'], self.config['data_size'], 1)
+        )
 
         if not self.snake_cache_path.exists():
-            cache = np.memmap(**snake_args, mode='w+')
+            snake_cache = np.memmap(**snake_args, mode='w+')
+            mask_cache  = np.memmap(**mask_args, mode='w+')
             for i in tqdm(range(len(self.gts)), desc='Building Snake Cache'):
-                cache[i] = self.loadsnake(i) * self.config['data_size']
-            cache.flush()
+                mask, snake = self.loadgt(i)
+                mask_cache[i]  = mask[:, :, np.newaxis]
+                snake_cache[i] = snake
+            mask_cache.flush()
+            snake_cache.flush()
         self.snake_cache = np.memmap(**snake_args, mode='r')
+        self.mask_cache  = np.memmap(**mask_args, mode='r')
 
         ref_args = dict(
             filename=self.ref_cache_path,
@@ -145,14 +145,21 @@ class UC1SnakeDataset(torch.utils.data.Dataset):
             cache.flush()
         self.ref_cache = np.memmap(**ref_args, mode='r')
 
-    def loadsnake(self, idx):
+    def loadgt(self, idx):
         path = self.gts[idx]
         *_, site, date, gtname = path.parts
 
         with rio.open(path) as raster:
             gt = raster.read(1)
-        snake = snakify(gt, self.config['vertices'])
-        return snake
+
+        snake = snakify(gt, self.config['vertices']) 
+        snake = snake * self.config['data_size']
+
+        gt = jax.image.resize(gt,
+            [self.config['data_size'], self.config['data_size']],
+            "nearest"
+        ).astype(np.uint8)
+        return gt, snake
 
     def loadref(self, idx):
         path = self.gts[idx]
@@ -177,8 +184,9 @@ class UC1SnakeDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         snake = self.snake_cache[idx]
+        mask = self.mask_cache[idx].astype(np.float32)
         ref = self.ref_cache[idx]
-        return ref, snake
+        return ref, mask, snake
 
     def __len__(self):
         return len(self.gts)

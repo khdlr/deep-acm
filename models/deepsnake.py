@@ -16,14 +16,15 @@ class DeepSnake():
         self.subdivide = subdivide
         self.weight_sharing = weight_sharing
 
-    def __call__(self, imagery, initialization, is_training=False):
+    def __call__(self, imagery, is_training=False):
         backbone = self.backbone()
         feature_maps = backbone(imagery, is_training)
 
         if self.subdivide:
             vertices = jnp.zeros([imagery.shape[0], 3, 2])
         else:
-            vertices = initialization
+            raise NotImplementedError("HEEELP, ")
+            vertices = jnp.zeros([])
         steps = [vertices]
 
         if self.weight_sharing:

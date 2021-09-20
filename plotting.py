@@ -18,7 +18,29 @@ def draw_snake(draw, snake, dashed=False, **kwargs):
             draw.line((x0, y0, x1, y1), **kwargs)
 
 
-def log_image(img, truth, preds, init, tag, step):
+def log_gan_prediction(img, truth, tag, step):
+    H, W, C = img.shape
+
+    img = np.asarray(jax.image.resize(img, (512, 512, C), method='linear'))
+    RGB = [2, 1, 0]
+    if C == 1:
+        RGB = [0, 0, 0]
+    img = img[:, :, RGB]
+    img = np.clip(255 * img[:,:, RGB], 0, 255).astype(np.uint8)
+
+    H, W, C = img.shape
+    truth = 0.5 * H * (1 + truth)
+
+    img = Image.fromarray(img, mode='RGB')
+
+    draw = ImageDraw.Draw(img)
+    draw_snake(draw, truth, fill=(255, 0, 0), width=3)
+
+    img = np.asarray(img).astype(np.float32) / 255
+    wandb.log({tag: wandb.Image(img)}, step=step)
+
+
+def log_image(img, truth, preds, tag, step):
     H, W, C = img.shape
 
     img = np.asarray(jax.image.resize(img, (512, 512, C), method='linear'))
@@ -30,13 +52,11 @@ def log_image(img, truth, preds, init, tag, step):
 
     H, W, C = img.shape
     truth = 0.5 * H * (1 + truth)
-    init  = 0.5 * H * (1 + init)
     preds = [0.5 * H * (1 + p) for p in preds]
 
     img = Image.fromarray(img, mode='RGB')
 
     draw = ImageDraw.Draw(img)
-    draw_snake(draw, init, fill=(0, 0, 255))
     draw_snake(draw, truth, fill=(255, 0, 0), width=3)
 
     for i, snake in enumerate(preds, 1):
@@ -49,7 +69,7 @@ def log_image(img, truth, preds, init, tag, step):
     wandb.log({tag: wandb.Image(img)}, step=step)
 
 
-def log_video(img, truth, preds, init, tag, step):
+def log_video(img, truth, preds, tag, step):
     H, W, C = img.shape
     img = np.asarray(jax.image.resize(img, (256, 256, C), method='linear'))
     RGB = [2, 1, 0]
@@ -60,7 +80,6 @@ def log_video(img, truth, preds, init, tag, step):
 
     H, W, C = img.shape
     truth = 0.5 * H * (1 + truth)
-    init  = 0.5 * H * (1 + init)
     preds = [0.5 * H * (1 + p) for p in preds]
 
     lerped_preds = []
