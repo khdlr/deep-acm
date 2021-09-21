@@ -23,7 +23,7 @@ def _isval(gt_path):
 
 
 class DeterministicShuffle(torch.utils.data.Sampler):
-    def __init__(self, length, rng_key, repetitions=50):
+    def __init__(self, length, rng_key, repetitions=500):
         self.rng_key = rng_key
         self.length = length
         self.repetitions = repetitions

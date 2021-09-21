@@ -334,7 +334,7 @@ class SlimResNet(hk.Module):
     check_length(4, channels_per_group, "channels_per_group")
 
     initial_conv_config = dict(initial_conv_config or {})
-    initial_conv_config.setdefault("output_channels", 64)
+    initial_conv_config.setdefault("output_channels", 16)
     initial_conv_config.setdefault("kernel_shape", 7)
     initial_conv_config.setdefault("stride", 2)
     initial_conv_config.setdefault("with_bias", False)

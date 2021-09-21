@@ -66,34 +66,38 @@ def changed_state(state, params=None, buffers=None, opt=None):
     )
 
 
-def prep(batch, key=None, augment=False):
+def prep(batch, key=None, augment=False, input_types=None):
     ops = []
     if augment: ops += [
         augmax.HorizontalFlip(),
         augmax.VerticalFlip(),
         augmax.Rotate90(),
-        augmax.Rotate(15),
+        # augmax.Rotate(15),
         augmax.Warp(coarseness=16)
     ]
     ops += [augmax.ByteToFloat()]
-    if augment: ops += [
-        augmax.ChannelShuffle(p=0.1),
-        augmax.Solarization(p=0.1),
-    ]
+    # if augment: ops += [
+    #     augmax.ChannelShuffle(p=0.1),
+    #     augmax.Solarization(p=0.1),
+    # ]
 
-    input_types =  [
-        augmax.InputType.IMAGE,
-        augmax.InputType.MASK,
-        augmax.InputType.CONTOUR,
-    ]
+    if input_types is None:
+        input_types = [
+            augmax.InputType.IMAGE,
+            augmax.InputType.MASK,
+            augmax.InputType.CONTOUR,
+        ]
     chain = augmax.Chain(*ops, input_types=input_types)
     if augment == False:
         key = jax.random.PRNGKey(0)
     subkeys = jax.random.split(key, batch[0].shape[0])
     transformation = jax.vmap(chain)
-    image, mask, contours = transformation(subkeys, *batch)
-    contours = 2 * (contours / image.shape[1]) - 1.0
-    return image, mask, contours
+    outputs = list(transformation(subkeys, *batch))
+    for i, typ in enumerate(input_types):
+        if typ == augmax.InputType.CONTOUR:
+            outputs[i] = 2 * (outputs[i] / outputs[0].shape[1]) - 1.0
+
+    return outputs
 
 
 def make_fake_batch(key, size, batch_size):
@@ -121,39 +125,46 @@ def train_step(nets, states, batch, key):
     def calculate_G_loss(params):
         output, state = nets.G(params, states.G.buffers, input_noise, fake_mask, is_training=True)
         fake = jnp.concatenate([output, fake_mask], axis=-1)
-        loss, _ = nets.D(states.D.params, states.D.buffers, fake, is_training=False)
+        D_out, _ = nets.D(states.D.params, states.D.buffers, fake, is_training=False)
+        loss = -jnp.mean(jax.nn.log_sigmoid(D_out))
+
         metrics = {'Generator': loss}
-        return jnp.mean(loss), (state, output, metrics)
-    G_new, G_output, G_metrics = update_net(nets.G, states.G, calculate_G_loss)
+        return loss, (state, output, metrics)
+    G_new, fake_img, G_metrics = update_net(nets.G, states.G, calculate_G_loss)
 
     # Update Discriminator
-    fake = jnp.concatenate([G_output, fake_mask], axis=-1)
+    # fake_img, fake_mask = prep((fake_img, fake_mask), key3, augment=True,
+    #         input_types=[augmax.InputType.IMAGE, augmax.InputType.MASK])
+    fake = jnp.concatenate([fake_img, fake_mask], axis=-1)
     true = jnp.concatenate([imagery, mask], axis=-1)
     def calculate_D_loss(params):
-        def img_to_output(img):
-            x, _ = nets.D(params, states.D.buffers, img, is_training=True)
-            return jnp.sum(jnp.mean(x, axis=-1))
-
-        t = jax.random.uniform(key3, [fake.shape[0], 1, 1, 1])
-        interp = t * fake + (1-t) * true
-
-        grad = jax.grad(img_to_output)(interp)
-        gradnorm = jnp.sum(jnp.square(grad), axis=[1,2,3])
-        gradient_penalty = jnp.mean(jnp.square(gradnorm - 1))
-
         state = states.D.buffers
         out_true,  state = nets.D(params, state, true, is_training=True)
         out_false, state = nets.D(params, state, fake, is_training=True)
 
-        loss = jnp.mean(out_true) - jnp.mean(out_false)
+        loss = - jnp.mean(jax.nn.log_sigmoid( out_true)) \
+               - jnp.mean(jax.nn.log_sigmoid(-out_false))
 
         metrics = {
-            'margin': -loss,
-            '∇_penalty': gradient_penalty
+            'D_true': jnp.mean(jax.nn.sigmoid(out_true)),
+            'D_false': jnp.mean(jax.nn.sigmoid(out_false)),
+            'margin': jnp.mean(jax.nn.sigmoid(out_true) - jax.nn.sigmoid(out_false)),
         }
 
-        return loss + 10 * gradient_penalty, (state, None, metrics)
+        return loss, (state, None, metrics)
     D_new, D_output, D_metrics = update_net(nets.D, states.D, calculate_D_loss)
+
+    metrics = {**G_metrics, **D_metrics}
+
+    return metrics, Nets(G=G_new, D=D_new, S=states.S) 
+
+
+@jax.partial(jax.jit, static_argnums=0)
+def train_S_step(nets, states, key):
+    key1, key2 = jax.random.split(key, 2)
+    input_noise = jax.random.normal(key1, [config['batch_size'], 1024])
+    fake_mask, fake_poly = make_fake_batch(key2, config['data_size'], config['batch_size'])
+    G_output, _ = nets.G(states.G.params, states.G.buffers, input_noise, fake_mask, is_training=False)
 
     # Update Snake
     def calculate_S_loss(params):
@@ -165,11 +176,8 @@ def train_step(nets, states, batch, key):
         for m in METRICS:
             metrics[m] = jnp.mean(jax.vmap(METRICS[m])(snake_pred, fake_poly))
         return loss, (state, snake_pred, metrics)
-    S_new, S_output, S_metrics = update_net(nets.S, states.S, calculate_S_loss)
-
-    metrics = {**G_metrics, **D_metrics, **S_metrics}
-
-    return metrics, Nets(G=G_new, D=D_new, S=S_new) 
+    S_new, _, metrics = update_net(nets.S, states.S, calculate_S_loss)
+    return metrics, Nets(G=states.G, D=states.D, S=S_new) 
 
 
 @jax.partial(jax.jit, static_argnums=0)
@@ -189,8 +197,14 @@ def gan_val_step(nets, states, key):
     key1, key2 = jax.random.split(key, 2)
     fake_mask, fake_poly = make_fake_batch(key1, config['data_size'], 8)
     input_noise = jax.random.normal(key2, [8, 1024])
-    output, _ = nets.G(states.G.params, states.G.buffers, input_noise, fake_mask, is_training=False)
-    return output, fake_mask, fake_poly
+    fake_imagery, _ = nets.G(states.G.params, states.G.buffers, input_noise, fake_mask, is_training=False)
+    predictions, _ = nets.S(states.S.params, states.S.buffers, fake_imagery, is_training=False)
+    metrics = {}
+    pred = predictions[-1]
+    for m in METRICS:
+        metrics[m] = jnp.mean(jax.vmap(METRICS[m])(pred, fake_poly))
+
+    return metrics, fake_imagery, fake_poly, predictions
 
 
 def save_state(state, out_path):
@@ -281,54 +295,64 @@ if __name__ == '__main__':
     last_improvement = 0
     wandb.init(project='Deep Snake', config=config)
 
-    for epoch in range(1, 201):
+    for epoch in range(1, 2001):
         wandb.log({f'epoch': epoch}, step=epoch)
         prog = tqdm(train_loader, desc=f'Ep {epoch} Trn')
         trn_metrics = {}
         loss_ary = None
         for step, batch in enumerate(prog, 1):
-            # if epoch == 1 and step == 100:
-            #     jax.profiler.start_trace("tensorboard/train")
             train_key, subkey = jax.random.split(train_key)
             metrics, states = train_step(nets, states, batch, subkey)
+
+            if epoch > 0:
+                train_key, subkey = jax.random.split(train_key)
+                metrics2, states = train_S_step(nets, states, subkey)
+                metrics = {**metrics, **metrics2}
+
             for m in metrics:
               if m not in trn_metrics: trn_metrics[m] = []
               trn_metrics[m].append(metrics[m])
-            # if epoch == 1 and step == 105:
-            #     for m in metrics:
-            #         metrics[m].block_until_ready()
-            #     jax.profiler.stop_trace()
-            if step % 100 == 0 or step == len(prog):
+            if step % 10 == 0 or step == len(prog):
                 losses = []
-                prog.set_description(f'{np.mean(trn_metrics["snake_loss"]):.3f}')
+                prog.set_description(f'{np.mean(trn_metrics["margin"]):.3f}')
 
         # Save Checkpoint
         save_state(states, Path('checkpoints') / f'{wandb.run.id}-latest.npz')
+        save_state(states, Path('checkpoints') / f'{wandb.run.id}-{epoch:04d}.npz')
         log_metrics(trn_metrics, 'trn/', epoch)
+
+        # Validate GAN
+        val_key = persistent_val_key
+        gan_metrics = {}
+        for step in tqdm(range(32), desc=f'Ep {epoch} GAN Val'):
+            val_key, subkey = jax.random.split(val_key)
+            metrics, *inspection = gan_val_step(nets, states, subkey)
+            imagery, contours, predictions = inspection
+
+            for m in metrics:
+              if m not in gan_metrics: gan_metrics[m] = []
+              gan_metrics[m].append(metrics[m])
+            if step > 0: continue
+
+            for i, (img, contour) in enumerate(zip(imagery, contours)):
+                preds = [p[i] for p in predictions]
+                log_video(img, contour, preds, f'GAN_Anim/{i:02d}', epoch)
+                log_image(img, contour, preds, f'GAN_Img/{i:02d}', epoch)
 
         # Validate
         val_key = persistent_val_key
         val_metrics = {}
-        imgdata = []
-        viddata = []
         for step, batch in enumerate(tqdm(val_loader, desc=f'Ep {epoch} Val')):
             val_key, subkey = jax.random.split(val_key)
-            metrics, *inspection = val_step(nets, states, batch, val_key)
+            metrics, *inspection = val_step(nets, states, batch, subkey)
             for m in metrics:
               if m not in val_metrics: val_metrics[m] = []
               val_metrics[m].append(metrics[m])
 
             imagery, contours, predictions = inspection
             predictions = [p[0] for p in predictions]
-            imgdata.append((imagery[0], contours[0], predictions, f"Imgs/Val{step}", epoch))
-            viddata.append((imagery[0], contours[0], predictions, f"Anim/Val{step}", epoch))
+            log_image(imagery[0], contours[0], predictions, f"Imgs/Val{step}", epoch)
+            log_video(imagery[0], contours[0], predictions, f"Anim/Val{step}", epoch)
 
         log_metrics(val_metrics, 'val/', epoch)
-        for img in imgdata:
-            log_image(*img)
-        for vid in tqdm(viddata, desc='Logging Videos'):
-            log_video(*vid)
 
-        imgs, _, contours = gan_val_step(nets, states, persistent_val_key)
-        for i, (img, contour) in enumerate(zip(imgs, contours)):
-            log_gan_prediction(img, contour, f'GAN/gen{i:02d}', epoch)

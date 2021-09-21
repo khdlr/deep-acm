@@ -122,27 +122,23 @@ class Generator():
 
     def init(self):
         super().__init__()
-        self.init_latent = hk.Linear(4 * 4 * 1024)
+        self.init_latent = hk.Linear(4 * 4 * 256)
         self.init_cond = hk.Conv2D(8, 3)
 
         self.blocks = [
-            UpBlock( 512),
-            UpBlock( 512),
-            # UpBlock( 256),
             UpBlock( 256),
             UpBlock( 128),
+            UpBlock( 128),
             UpBlock(  64),
-            # UpBlock(  32)
+            UpBlock(  32),
         ]
 
         self.cond_blocks = [
-            # DownBlock(  8),
-            # DownBlock( 16),
-            DownBlock( 32),
-            DownBlock( 64),
-            DownBlock( 64),
-            DownBlock(128),
-            DownBlock(128),
+            DownBlock( 8),
+            DownBlock(16),
+            DownBlock(32),
+            DownBlock(64),
+            DownBlock(64),
         ]
 
         self.final_bn = hk.BatchNorm(True, True, 0.999)
@@ -152,7 +148,7 @@ class Generator():
         self.init()
 
         x = self.init_latent(x)
-        x = rearrange(x, 'B (H W C) -> B H W C', H=4, W=4, C=1024)
+        x = rearrange(x, 'B (H W C) -> B H W C', H=4, W=4, C=256)
 
         cond = self.init_cond(cond)
         cond_connections = []
@@ -170,16 +166,14 @@ class Generator():
 
 class Discriminator():
     def init(self):
-        self.init_conv = hk.Conv2D(32, 3)
+        self.init_conv = hk.Conv2D(16, 3)
 
         self.blocks = [
-            # DownBlock( 32),
+            DownBlock( 32),
             DownBlock( 64),
             DownBlock(128),
+            DownBlock(128),
             DownBlock(256),
-            # DownBlock(256),
-            DownBlock(512),
-            DownBlock(512),
         ]
 
         self.final_fc = hk.Linear(1, with_bias=False)
