@@ -279,19 +279,19 @@ if __name__ == '__main__':
     params, buffers = S.init(jax.random.PRNGKey(39), img, is_training=True)
     S_state = TrainingState(params=params, buffers=buffers, opt=opt_init(params))
 
-    from jax.tools.jax_to_hlo import jax_to_hlo
-    from jax.lib import xla_client
-    from jax.tree_util import tree_flatten, tree_leaves
-    from jax.api_util import flatten_fun
-    from jax.linear_util import wrap_init
+    # from jax.tools.jax_to_hlo import jax_to_hlo
+    # from jax.lib import xla_client
+    # from jax.tree_util import tree_flatten, tree_leaves
+    # from jax.api_util import flatten_fun
+    # from jax.linear_util import wrap_init
 
-    partial = jax.partial(S.apply, params, buffers, jax.random.PRNGKey(0))
-    hlo = jax_to_hlo(partial, [
-        ("img", xla_client.Shape(f"f32[{','.join(map(str, img.shape))}]"))
-    ])[1]
+    # partial = jax.partial(S.apply, params, buffers, jax.random.PRNGKey(0))
+    # hlo = jax_to_hlo(partial, [
+    #     ("img", xla_client.Shape(f"f32[{','.join(map(str, img.shape))}]"))
+    # ])[1]
 
-    with open("hlo.txt", "w") as f:
-        f.write(hlo)
+    # with open("hlo.txt", "w") as f:
+    #     f.write(hlo)
 
     G = models.gan.Generator(output_channels=len(config['bands']))
     G = hk.without_apply_rng(hk.transform_with_state(G))
