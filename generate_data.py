@@ -53,7 +53,7 @@ def generate_image(key: jnp.array, size) -> Tuple[jnp.array, jnp.array]:
     p0, pn = jnp.split(startend / jnp.max(jnp.abs(startend), axis=1, keepdims=True), 2, axis=0)
     polyline = jnp.concatenate([p0, centerpoint, pn], axis=0)
 
-    for i in range(5):
+    for i in range(4):
         key, subkey = jax.random.split(key)
         polyline = subdivide_and_noise(polyline, subkey)
 

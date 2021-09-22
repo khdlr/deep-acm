@@ -105,7 +105,7 @@ def make_fake_batch(key, size, batch_size):
     return jax.vmap(generate_image, in_axes=[0, None])(data_keys, size)
 
 
-def update_net(net, state, loss_closure):
+def update_net(state, loss_closure):
     _, optimizer = get_optimizer()
     (loss, (buffers, output, metrics)), gradients = jax.value_and_grad(loss_closure, has_aux=True)(state.params)
     updates, opt = optimizer(gradients, state.opt, state.params)
@@ -130,7 +130,7 @@ def train_step(nets, states, batch, key):
 
         metrics = {'Generator': loss}
         return loss, (state, output, metrics)
-    G_new, fake_img, G_metrics = update_net(nets.G, states.G, calculate_G_loss)
+    G_new, fake_img, G_metrics = update_net(states.G, calculate_G_loss)
 
     # Update Discriminator
     # fake_img, fake_mask = prep((fake_img, fake_mask), key3, augment=True,
@@ -152,7 +152,7 @@ def train_step(nets, states, batch, key):
         }
 
         return loss, (state, None, metrics)
-    D_new, D_output, D_metrics = update_net(nets.D, states.D, calculate_D_loss)
+    D_new, D_output, D_metrics = update_net(states.D, calculate_D_loss)
 
     metrics = {**G_metrics, **D_metrics}
 
@@ -161,14 +161,14 @@ def train_step(nets, states, batch, key):
 
 @jax.partial(jax.jit, static_argnums=0)
 def train_S_step(nets, states, key):
-    key1, key2 = jax.random.split(key, 2)
+    key1, key2, key3 = jax.random.split(key, 3)
     input_noise = jax.random.normal(key1, [config['batch_size'], 1024])
     fake_mask, fake_poly = make_fake_batch(key2, config['data_size'], config['batch_size'])
     G_output, _ = nets.G(states.G.params, states.G.buffers, input_noise, fake_mask, is_training=False)
 
     # Update Snake
     def calculate_S_loss(params):
-        snake_pred, state = nets.S(params, states.S.buffers, G_output, is_training=True)
+        snake_pred, state = nets.S(params, states.S.buffers, key3, G_output, is_training=True)
         loss = jnp.mean(jax.vmap(loss_fn)(snake_pred, fake_poly))
         metrics = {
             'snake_loss': loss,
@@ -176,14 +176,14 @@ def train_S_step(nets, states, key):
         for m in METRICS:
             metrics[m] = jnp.mean(jax.vmap(METRICS[m])(snake_pred, fake_poly))
         return loss, (state, snake_pred, metrics)
-    S_new, _, metrics = update_net(nets.S, states.S, calculate_S_loss)
+    S_new, _, metrics = update_net(states.S, calculate_S_loss)
     return metrics, Nets(G=states.G, D=states.D, S=S_new) 
 
 
 @jax.partial(jax.jit, static_argnums=0)
 def val_step(nets, states, batch, key):
     imagery, mask, contours = prep(batch)
-    predictions, _ = nets.S(states.S.params, states.S.buffers, imagery, is_training=False)
+    predictions, _ = nets.S(states.S.params, states.S.buffers, key, imagery, is_training=False)
     metrics = {}
     pred = predictions[-1]
     for m in METRICS:
@@ -198,7 +198,7 @@ def gan_val_step(nets, states, key):
     fake_mask, fake_poly = make_fake_batch(key1, config['data_size'], 8)
     input_noise = jax.random.normal(key2, [8, 1024])
     fake_imagery, _ = nets.G(states.G.params, states.G.buffers, input_noise, fake_mask, is_training=False)
-    predictions, _ = nets.S(states.S.params, states.S.buffers, fake_imagery, is_training=False)
+    predictions, _ = nets.S(states.S.params, states.S.buffers, key, fake_imagery, is_training=False)
     metrics = {}
     pred = predictions[-1]
     for m in METRICS:
@@ -262,9 +262,11 @@ if __name__ == '__main__':
     else:
         loss_fn = getattr(loss_functions, lf)
 
+    model_args = config['model_args']
+    model_args['vertices'] = config['vertices']
     modelclass = getattr(models, config['model'])
-    S = modelclass(backbone=config['backbone'], **config['head'])
-    S = hk.without_apply_rng(hk.transform_with_state(S))
+    S = modelclass(**model_args)
+    S = hk.transform_with_state(S)
 
     # initialize data loading
     train_key, subkey = jax.random.split(train_key)
@@ -276,6 +278,25 @@ if __name__ == '__main__':
     opt_init, _ = get_optimizer()
     params, buffers = S.init(jax.random.PRNGKey(39), img, is_training=True)
     S_state = TrainingState(params=params, buffers=buffers, opt=opt_init(params))
+
+    from jax.tools.jax_to_hlo import jax_to_hlo
+    from jax.lib import xla_client
+    from jax.tree_util import tree_flatten, tree_leaves
+    from jax.api_util import flatten_fun
+    from jax.linear_util import wrap_init
+
+    # args_flat, in_tree = tree_flatten((params, buffers, jax.random.PRNGKey(0)))
+    # fun_flat, out_tree = flatten_fun(wrap_init(S.apply), in_tree)
+
+    partial = jax.partial(S.apply, params, buffers, jax.random.PRNGKey(0), img)
+    hlo = jax_to_hlo(partial, [])[1]
+
+    # hlo = jax_to_hlo(fun_flat, [
+    #     (f'arg{i}', xla_client.Shape(f'f32[{",".join(map(str,arg.shape))}]'))
+    # for i, arg in enumerate(args_flat)])[1]
+
+    with open("hlo_snake.txt", "w") as f:
+        f.write(hlo)
 
     G = models.gan.Generator(output_channels=len(config['bands']))
     G = hk.without_apply_rng(hk.transform_with_state(G))
@@ -336,7 +357,8 @@ if __name__ == '__main__':
 
             for i, (img, contour) in enumerate(zip(imagery, contours)):
                 preds = [p[i] for p in predictions]
-                log_video(img, contour, preds, f'GAN_Anim/{i:02d}', epoch)
+                if len(preds) > 1:
+                    log_video(img, contour, preds, f'GAN_Anim/{i:02d}', epoch)
                 log_image(img, contour, preds, f'GAN_Img/{i:02d}', epoch)
 
         # Validate
@@ -352,7 +374,8 @@ if __name__ == '__main__':
             imagery, contours, predictions = inspection
             predictions = [p[0] for p in predictions]
             log_image(imagery[0], contours[0], predictions, f"Imgs/Val{step}", epoch)
-            log_video(imagery[0], contours[0], predictions, f"Anim/Val{step}", epoch)
+            if len(preds) > 1:
+                log_video(imagery[0], contours[0], predictions, f"Anim/Val{step}", epoch)
 
         log_metrics(val_metrics, 'val/', epoch)
 

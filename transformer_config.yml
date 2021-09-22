@@ -1,12 +1,13 @@
 batch_size: 64
-model: DeepSnake
+model: ContourTransformer
 model_args:
-  backbone: SlimResNet18
   model_dim: 128
-  iterations: 4
-  coord_features: true
-  subdivide: false
-  weight_sharing: true
+  patch_size: 16
+  vertices: 33
+  n_heads: 4
+  dim_feedforward: 512
+  encoder_layers: 3
+  decoder_layers: 3
 head:
   subdivide: true
   coord_features: true
