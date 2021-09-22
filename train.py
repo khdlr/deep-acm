@@ -285,17 +285,12 @@ if __name__ == '__main__':
     from jax.api_util import flatten_fun
     from jax.linear_util import wrap_init
 
-    # args_flat, in_tree = tree_flatten((params, buffers, jax.random.PRNGKey(0)))
-    # fun_flat, out_tree = flatten_fun(wrap_init(S.apply), in_tree)
+    partial = jax.partial(S.apply, params, buffers, jax.random.PRNGKey(0))
+    hlo = jax_to_hlo(partial, [
+        ("img", xla_client.Shape(f"f32[{','.join(map(str, img.shape))}]"))
+    ])[1]
 
-    partial = jax.partial(S.apply, params, buffers, jax.random.PRNGKey(0), img)
-    hlo = jax_to_hlo(partial, [])[1]
-
-    # hlo = jax_to_hlo(fun_flat, [
-    #     (f'arg{i}', xla_client.Shape(f'f32[{",".join(map(str,arg.shape))}]'))
-    # for i, arg in enumerate(args_flat)])[1]
-
-    with open("hlo_snake.txt", "w") as f:
+    with open("hlo.txt", "w") as f:
         f.write(hlo)
 
     G = models.gan.Generator(output_channels=len(config['bands']))
