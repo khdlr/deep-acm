@@ -3,7 +3,6 @@
 import jax
 import jax.numpy as jnp
 import haiku as hk
-from einops import rearrange
 
 
 class Transformer(hk.Module):
@@ -77,7 +76,6 @@ class EncoderLayer(hk.Module):
         if is_training:
             x = hk.dropout(hk.next_rng_key(), self.dropout, x)
         x = self.norm1(x)
-        resid = x
         x = resid + x
 
         # Feedforward-Block
