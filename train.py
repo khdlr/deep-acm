@@ -17,7 +17,6 @@ import wandb
 from tqdm import tqdm
 
 import sys
-sys.path.append('augmax')
 import augmax
 
 import models
