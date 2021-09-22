@@ -333,8 +333,10 @@ if __name__ == '__main__':
                 prog.set_description(f'{np.mean(trn_metrics["margin"]):.3f}')
 
         # Save Checkpoint
-        save_state(states, Path('checkpoints') / f'{wandb.run.id}-latest.npz')
-        save_state(states, Path('checkpoints') / f'{wandb.run.id}-{epoch:04d}.npz')
+        ckpt_dir = Path('checkpoints')
+        ckpt_dir.mkdir(exist_ok=True)
+        save_state(states, ckpt_dir / f'{wandb.run.id}-latest.npz')
+        save_state(states, ckpt_dir / f'{wandb.run.id}-{epoch:04d}.npz')
         log_metrics(trn_metrics, 'trn/', epoch)
 
         # Validate GAN
