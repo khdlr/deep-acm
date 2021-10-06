@@ -125,7 +125,7 @@ def train_step(nets, states, batch, key):
         output, state = nets.G(params, states.G.buffers, input_noise, fake_mask, is_training=True)
         fake = jnp.concatenate([output, fake_mask], axis=-1)
         D_out, _ = nets.D(states.D.params, states.D.buffers, fake, is_training=False)
-        loss = -jnp.mean(jax.nn.log_sigmoid(D_out))
+        loss = jnp.mean(jax.nn.log_sigmoid(-D_out))
 
         metrics = {'Generator': loss}
         return loss, (state, output, metrics)

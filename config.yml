@@ -1,18 +1,12 @@
 batch_size: 64
-model: ContourTransformer
+model: DeepSnake
 model_args:
-  model_dim: 128
-  patch_size: 16
-  n_heads: 4
-  dim_feedforward: 512
-  encoder_layers: 3
-  decoder_layers: 3
-head:
-  subdivide: true
+  backbone: SlimResNet18
+  model_dim: 512
+  iterations: 3
+  subdivide: false
+  weight_sharing: true
   coord_features: true
-  weight_sharing: false
-  width: 256
-  iterations: 4
 loss_function: SoftDTW(0.001)
 data_root: '../aicore/uc1/data'
 data_size: 128
