@@ -4,9 +4,8 @@ model_args:
   backbone: SlimResNet18
   model_dim: 512
   iterations: 5
-  subdivide: false
-  weight_sharing: true
   coord_features: true
+  stop_grad: true
 loss_function: SoftDTW(0.001)
 # Data args
 batch_size: 64

@@ -4,47 +4,34 @@ import haiku as hk
 
 from . import backbones
 from . import nnutils as nn
-from .snake_utils import SnakeHead, subdivide_polyline, AuxHead
+from .snake_utils import SnakeHead, AuxHead
 
 class DeepSnake():
     def __init__(self, backbone, vertices=64,
-            model_dim=64, iterations=5, coord_features=False, subdivide=False, weight_sharing=True):
+            model_dim=64, iterations=5, coord_features=False, stop_grad=True):
         super().__init__()
         self.backbone = getattr(backbones, backbone)
         self.model_dim = model_dim
         self.iterations = iterations
         self.coord_features = coord_features
-        self.subdivide = subdivide
-        self.weight_sharing = weight_sharing
         self.vertices = vertices
+        self.stop_grad = stop_grad
 
     def __call__(self, imagery, is_training=False):
         backbone = self.backbone()
         feature_maps = backbone(imagery, is_training)
 
-        if self.subdivide:
-            vertices = jnp.zeros([imagery.shape[0], 3, 2])
-        else:
-            vertices = jnp.zeros([imagery.shape[0], self.vertices, 2])
+        vertices = jnp.zeros([imagery.shape[0], self.vertices, 2])
         steps = [vertices]
 
-        if self.weight_sharing:
-            _head = SnakeHead(self.model_dim, self.coord_features)
-            head = lambda x, y: _head(x, y)
-        else:
-            head = lambda x, y: SnakeHead(self.model_dim, self.coord_features)(x, y)
+        _head = SnakeHead(self.model_dim, self.coord_features)
+        head = lambda x, y: _head(x, y)
 
-        if self.subdivide:
-            vertices = head(vertices, feature_maps)
-            steps.append(vertices)
         for _ in range(self.iterations):
-            if self.subdivide:
-                vertices = subdivide_polyline(vertices)
-            vertices = head(vertices, feature_maps)
+            if self.stop_grad:
+                vertices = jax.lax.stop_grad(vertices)
+            vertices = vertices + head(vertices, feature_maps)
             steps.append(vertices)
 
-        if is_training:
-            aux_pred = AuxHead(*imagery.shape[1:3])(feature_maps)
-            return vertices, aux_pred
-        else:
-            return steps
+        # aux_pred = AuxHead(*imagery.shape[1:3])(feature_maps)
+        return steps, aux_pred

@@ -59,7 +59,7 @@ class SnakeHead(hk.Module):
 
         convolved_features = blocks(input_features)
         offsets = mk_offset(convolved_features)
-        return vertices + offsets
+        return offsets
 
 
 class AuxHead(hk.Module):

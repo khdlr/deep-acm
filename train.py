@@ -39,14 +39,14 @@ PATIENCE = 100
 
 
 def get_optimizer():
-    # lr_schedule = optax.warmup_cosine_decay_schedule(
-    #     init_value=1e-7,
-    #     peak_value=1e-3,
-    #     warmup_steps=1024,
-    #     decay_steps=10000-1024,
-    #     end_value=3e-6
-    # )
-    return optax.adam(1e-3, b1=0.5, b2=0.9)
+    lr_schedule = optax.warmup_cosine_decay_schedule(
+        init_value=1e-7,
+        peak_value=1e-3,
+        warmup_steps=1024,
+        decay_steps=20000-1024,
+        end_value=3e-5
+    )
+    return optax.adam(lr_schedule, b1=0.5, b2=0.9)
 
 
 class TrainingState(NamedTuple):
@@ -112,13 +112,14 @@ def train_step(batch, state, key, net):
     img, snake = prep(batch, aug_key, augment=True)
 
     def calculate_loss(params):
-        (snake_pred, aux), buffers = net(params, state.buffers, model_key, img, is_training=True)
-        snake_loss  = jnp.mean(jax.vmap(loss_fn)(snake_pred, snake))
+        (snake_preds, aux), buffers = net(params, state.buffers, model_key, img, is_training=True)
 
-        metrics = {
-            'snake_loss': snake_loss,
-        }
-        return sum(metrics.values()), (buffers, snake_pred, metrics)
+        loss_terms = {}
+        for iteration in snake_preds:
+            loss = jnp.mean(jax.vmap(loss_fn)(snake_pred, snake))
+            loss_terms[f'snake_loss_step{iteration}'] = loss
+
+        return sum(loss_terms.values()), (buffers, snake_pred, loss_terms)
 
     (loss, (buffers, prediction, metrics)), gradients = jax.value_and_grad(calculate_loss, has_aux=True)(state.params)
     updates, new_opt = optimizer(gradients, state.opt, state.params)
@@ -139,7 +140,12 @@ def train_step(batch, state, key, net):
 def val_step(batch, state, key, net):
     imagery, contours = prep(batch)
     predictions, _ = net(state.params, state.buffers, key, imagery, is_training=False)
+
     metrics = {}
+    for iteration in predictions:
+        loss = jnp.mean(jax.vmap(loss_fn)(snake_pred, snake))
+        metrics[f'snake_loss_step{iteration}'] = loss
+
     pred = predictions[-1]
     for m in METRICS:
         metrics[m] = jnp.mean(jax.vmap(METRICS[m])(pred, contours))
