@@ -1,15 +1,15 @@
-batch_size: 64
+# Model Specification
 model: DeepSnake
 model_args:
   backbone: SlimResNet18
   model_dim: 512
-  iterations: 3
+  iterations: 5
   subdivide: false
   weight_sharing: true
   coord_features: true
 loss_function: SoftDTW(0.001)
-data_root: '../aicore/uc1/data'
-data_size: 128
-bands:
-  - SPECTRAL/BANDS/STD_2s_B8_8b
-vertices: 33
+# Data args
+batch_size: 64
+data_root: '../CALFIN/training/data'
+tile_size: 256
+vertices: 65

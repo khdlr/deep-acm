@@ -3,12 +3,13 @@ import jax.numpy as jnp
 import jax.scipy.ndimage as jnd
 import haiku as hk
 from . import nnutils as nn
+from functools import partial
 
 
 def subdivide_polyline(polyline):
     B, T, C = polyline.shape
     T_new = T * 2 - 1
-    resized = jax.vmap(jax.partial(jax.image.resize, shape=(T_new, C), method='linear'))(polyline)
+    resized = jax.vmap(partial(jax.image.resize, shape=(T_new, C), method='linear'))(polyline)
     return resized
 
 
@@ -50,10 +51,30 @@ class SnakeHead(hk.Module):
             features.append(jax.vmap(sample_at_vertices, [0, 0])(vertices, feature_map))
         # For coordinate features
         if self.coord_features:
-            features.append(vertices)
+            diff = vertices[:,1:] - vertices[:,:-1]
+            diff = jnp.pad(diff, [(0,0), (1,1), (0,0)])
+            features.append(diff[:, 1:])
+            features.append(diff[:, :-1])
         input_features = jnp.concatenate(features, axis=-1)
 
         convolved_features = blocks(input_features)
         offsets = mk_offset(convolved_features)
         return vertices + offsets
+
+
+class AuxHead(hk.Module):
+    def __init__(self, height, width=None):
+        super().__init__()
+        self.height = height
+        self.width  = width or height
+
+    def __call__(self, feature_maps):
+        upscaled = []
+        for fm in feature_maps:
+            B, H, W, C = fm.shape
+            upscaled.append(jax.image.resize(fm, [B, self.height, self.width, C], method='linear'))
+        x = jnp.concatenate(upscaled, axis=-1)
+        x = jax.nn.relu(hk.Conv2D(32, 1)(x))
+        x = hk.Conv2D(2, 1)(x)
+        return x
 

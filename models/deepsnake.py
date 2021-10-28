@@ -4,7 +4,7 @@ import haiku as hk
 
 from . import backbones
 from . import nnutils as nn
-from .snake_utils import SnakeHead, subdivide_polyline
+from .snake_utils import SnakeHead, subdivide_polyline, AuxHead
 
 class DeepSnake():
     def __init__(self, backbone, vertices=64,
@@ -44,6 +44,7 @@ class DeepSnake():
             steps.append(vertices)
 
         if is_training:
-            return vertices
+            aux_pred = AuxHead(*imagery.shape[1:3])(feature_maps)
+            return vertices, aux_pred
         else:
             return steps

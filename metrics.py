@@ -26,7 +26,8 @@ def squared_distance_point_to_best_segment(point, polyline):
                                  in_axes=[None, 0, 0])
     squared_distances = get_squared_distances(point, startpoints, endpoints)
     
-    return jnp.min(squared_distances)
+    min_dist = jnp.nanmin(squared_distances)
+    return jnp.where(jnp.isnan(min_dist), 0, min_dist)
 
 
 def squared_distance_points_to_best_segment(points, polyline):

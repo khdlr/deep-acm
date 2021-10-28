@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 
 from utils import pad_inf, fmt, distance_matrix
 from metrics import squared_distance_points_to_best_segment
+from lib.jump_flood import jump_flood
 
 
 def l2_loss(prediction, ground_truth):
@@ -175,3 +176,11 @@ def forward_rmse(prediction, ground_truth):
 def backward_rmse(prediction, ground_truth):
     squared_dist = squared_distance_points_to_best_segment(ground_truth, prediction)
     return jnp.sqrt(jnp.mean(squared_dist))
+
+
+def closest_point_loss(prediction, mask):
+    true_offsets = jax.lax.stop_gradient(jump_flood(mask[..., 0]))
+    error  = jnp.sum(jnp.square(prediction - true_offsets), axis=-1)
+    length = jnp.sum(jnp.square(true_offsets), axis=-1)
+
+    return jnp.mean(error / length)

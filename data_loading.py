@@ -5,11 +5,12 @@ import torch.utils.data
 import numpy as np
 import jax
 import jax.numpy as jnp
-import rasterio as rio
+from PIL import Image
 from pathlib import Path
 from skimage.measure import find_contours
 import yaml
 from tqdm import tqdm
+from skimage.transform import resize
 
 
 def md5(obj):
@@ -23,7 +24,7 @@ def _isval(gt_path):
 
 
 class DeterministicShuffle(torch.utils.data.Sampler):
-    def __init__(self, length, rng_key, repetitions=500):
+    def __init__(self, length, rng_key, repetitions=1):
         self.rng_key = rng_key
         self.length = length
         self.repetitions = repetitions
@@ -52,7 +53,7 @@ def numpy_collate(batch):
 
 
 def get_loader(batch_size, data_threads, mode, rng_key):
-    data = UC1SnakeDataset(mode=mode)
+    data = CalfinDataset(mode=mode)
 
     kwargs = dict(
         batch_size = batch_size,
@@ -69,130 +70,130 @@ def get_loader(batch_size, data_threads, mode, rng_key):
 def snakify(gt, vertices):
     contours = find_contours(gt, 0.5)
     # Select the longest contour
-    if len(contours) == 0:
-        empty = 0.0 * np.zeros([vertices, 2], np.float32)
-        return empty
 
-    contour = max(contours, key=lambda x: x.shape[0])
-    contour = contour.astype(np.float32)
-    contour = contour.view(np.complex64)[:, 0]
-    C_space = np.linspace(0, 1, len(contour), dtype=np.float32)
-    S_space = np.linspace(0, 1, vertices, dtype=np.float32)
+    out_contours = []
+    for contour in contours:
+        # filter our tiny contourlets
+        if contour.shape[0] < 12: continue
 
-    snake = np.interp(S_space, C_space, contour)
-    snake = snake[:, np.newaxis].view(np.float64).astype(np.float32)
+        contour = contour.astype(np.float32)
+        contour = contour.view(np.complex64)[:, 0]
+        C_space = np.linspace(0, 1, len(contour), dtype=np.float32)
+        S_space = np.linspace(0, 1, vertices, dtype=np.float32)
 
-    snake = snake / gt.shape[1]
+        snake = np.interp(S_space, C_space, contour)
+        snake = snake[:, np.newaxis].view(np.float64).astype(np.float32)
 
-    return snake
+        out_contours.append(snake)
+
+    return out_contours
 
 
-class UC1SnakeDataset(torch.utils.data.Dataset):
-    def __init__(self, mode='train'):
+class CalfinDataset(torch.utils.data.Dataset):
+    def __init__(self, mode):
         super().__init__()
         self.config = yaml.load(open('config.yml'), Loader=yaml.SafeLoader)
-        self.root = Path(self.config['data_root'])
+
+        self.root = Path(self.config['data_root']) / mode
+
         self.cachedir = self.root.parent / 'cache'
         self.cachedir.mkdir(exist_ok=True)
-        self.confighash = md5((self.config['bands'], self.config['data_size'], self.config['vertices']))
+        self.confighash = md5((self.config['tile_size'], self.config['vertices']))
 
-        self.gts = sorted(list(self.root.glob('ground_truth/*/*/*_30m.tif')))
-        if mode == 'train':
-            self.gts = [g for g in self.gts if not _isval(g)]
-        else:
-            self.gts = [g for g in self.gts if _isval(g)]
-
-        self.ref_cache_path   = self.cachedir / f'{mode}_{self.confighash}_ref.npy'
-        self.mask_cache_path  = self.cachedir / f'{mode}_{self.confighash}_mask.npy'
-        self.snake_cache_path = self.cachedir / f'{mode}_{self.confighash}_snake.npy'
+        self.tile_cache_path   = self.cachedir / f'{mode}_tile_{self.confighash}.npy'
+        self.mask_cache_path  = self.cachedir / f'{mode}_mask_{self.confighash}.npy'
+        self.snake_cache_path = self.cachedir / f'{mode}_snake_{self.confighash}.npy'
 
         self.assert_cache()
 
     def assert_cache(self):
-        snake_args = dict(
-            filename=str(self.snake_cache_path),
-            dtype=np.float32,
-            shape=(len(self.gts), self.config['vertices'], 2)
-        )
-        mask_args = dict(
-            filename=str(self.mask_cache_path),
-            dtype=np.uint8,
-            shape=(len(self.gts), self.config['data_size'], self.config['data_size'], 1)
-        )
+        if not self.snake_cache_path.exists() or not self.tile_cache_path.exists():
+            tiles  = []
+            masks  = []
+            snakes = []
 
-        if not self.snake_cache_path.exists():
-            snake_cache = np.memmap(**snake_args, mode='w+')
-            mask_cache  = np.memmap(**mask_args, mode='w+')
-            for i in tqdm(range(len(self.gts)), desc='Building Snake Cache'):
-                mask, snake = self.loadgt(i)
-                mask_cache[i]  = mask[:, :, np.newaxis]
-                snake_cache[i] = snake
-            mask_cache.flush()
-            snake_cache.flush()
-        self.snake_cache = np.memmap(**snake_args, mode='r')
-        self.mask_cache  = np.memmap(**mask_args, mode='r')
+            for tile, mask, snake in self.generate_tiles():
+                snakes.append(snake)
+                masks.append(mask)
+                tiles.append(tile)
 
-        ref_args = dict(
-            filename=self.ref_cache_path,
-            dtype=np.uint8,
-            shape=(len(self.gts), self.config['data_size'], self.config['data_size'], len(self.config['bands']))
-        )
+            np.save(self.snake_cache_path, np.stack(snakes))
+            np.save(self.mask_cache_path, np.stack(masks))
+            np.save(self.tile_cache_path, tiles)
 
-        if not self.ref_cache_path.exists():
-            cache = np.memmap(**ref_args, mode='w+')
-            for i in tqdm(range(len(self.gts)), desc='Building Ref Cache'):
-                cache[i] = self.loadref(i)
-            cache.flush()
-        self.ref_cache = np.memmap(**ref_args, mode='r')
+        self.snake_cache = np.load(self.snake_cache_path, mmap_mode='r')
+        self.mask_cache  = np.load(self.mask_cache_path,  mmap_mode='r')
+        self.tile_cache  = np.load(self.tile_cache_path,  mmap_mode='r')
 
-    def loadgt(self, idx):
-        path = self.gts[idx]
-        *_, site, date, gtname = path.parts
+    def generate_tiles(self):
+        prog = tqdm(list(self.root.glob('*_mask.png')))
+        count = 0
+        zeros = 0
+        taken = 0
+        for maskpath in prog:
+            tilesize = self.config['tile_size']
+            tilepath = str(maskpath).replace('_mask.png', '.png')
+            tile = np.asarray(Image.open(tilepath))
+            mask = np.asarray(Image.open(maskpath)) > 127
 
-        with rio.open(path) as raster:
-            gt = raster.read(1)
+            tile  = resize(tile, [512, 512, 3], order=1, anti_aliasing=True, preserve_range=True).astype(np.uint8)
+            mask  = resize(mask, [512, 512], order=0, anti_aliasing=False, preserve_range=True).astype(bool)
+            H, W, C = tile.shape
 
-        snake = snakify(gt, self.config['vertices']) 
-        snake = snake * self.config['data_size']
+            full_tile  = resize(tile, [256, 256, 3], order=1, anti_aliasing=True, preserve_range=True).astype(np.uint8)
+            full_mask  = resize(mask, [256, 256], order=0, anti_aliasing=False, preserve_range=True).astype(bool)
 
-        gt = jax.image.resize(gt,
-            [self.config['data_size'], self.config['data_size']],
-            "nearest"
-        ).astype(np.uint8)
-        return gt, snake
+            full_snake = snakify(full_mask, self.config['vertices'])
+            if len(full_snake) == 1:
+                taken += 1
+                yield(full_tile, full_mask, full_snake[0])
 
-    def loadref(self, idx):
-        path = self.gts[idx]
-        *_, site, date, gtname = path.parts
-        ref_root = self.root / 'reference_data' / site / date / '30m'
+            for y in np.linspace(0, H-tilesize, 4).astype(np.int32):
+                for x in np.linspace(0, W-tilesize, 4).astype(np.int32):
+                    patch = tile[y:y+tilesize, x:x+tilesize]
+                    patch_mask = mask[y:y+tilesize, x:x+tilesize]
 
-        ref = []
-        for band in self.config['bands']:
-            try:
-                with rio.open(ref_root / f'{band}.tif') as raster:
-                    b = raster.read(1).astype(np.uint8)
-                    ref.append(b)
-            except rio.errors.RasterioIOError:
-                print(f'RasterioIOError when opening {ref_root}/{band}.tif')
-                return None
-        ref = jnp.stack(ref, axis=-1)
-        ref = jax.image.resize(ref,
-            [self.config['data_size'], self.config['data_size'], ref.shape[2]],
-            "linear"
-        ).astype(np.uint8)
-        return ref
+                    useful = patch_mask.mean()
+                    invalid = np.all(patch == 0, axis=-1).mean()
+
+                    if useful < 0.3 or useful > 0.7 or invalid > 0.2:
+                        continue
+
+                    snakes = snakify(patch_mask, self.config['vertices'])
+                    count += 1
+
+                    if len(snakes) == 1:
+                        taken += 1
+                        assert patch.shape == (256, 256, 3), patch.shape
+                        assert patch_mask.shape == (256, 256), patch_mask.shape
+                        assert snakes[0].shape == (65, 2), snakes[0].shape
+                        yield(patch, patch_mask, snakes[0])
+                    else:
+                        lens = [s.shape[0] for s in snakes]
+                        if len(snakes) == 0:
+                            zeros += 1
+            prog.set_description(f'{taken:5d} tiles')
+
+            # print(f'Overall: {count}, '
+            #       f'Extracted: {taken}, '
+            #       f'No Border: {zeros}, '
+            #       f'Funky: {count - taken - zeros}')
 
     def __getitem__(self, idx):
         snake = self.snake_cache[idx]
-        mask = self.mask_cache[idx].astype(np.float32)
-        ref = self.ref_cache[idx]
-        return ref, mask, snake
+        # mask  = self.mask_cache[idx]
+        ref   = self.tile_cache[idx]
+
+        return ref, snake
 
     def __len__(self):
-        return len(self.gts)
+        return len(self.snake_cache)
 
 
 if __name__ == '__main__':
-    ds = UC1SnakeDataset('train')
+    ds = CalfinDataset('train')
+    print(len(ds))
     for a in tqdm(ds):
-        pass
+        for x in a:
+            print(x.shape, x.dtype)
+        break
