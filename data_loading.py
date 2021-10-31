@@ -164,9 +164,6 @@ class CalfinDataset(torch.utils.data.Dataset):
 
                     if len(snakes) == 1:
                         taken += 1
-                        assert patch.shape == (256, 256, 3), patch.shape
-                        assert patch_mask.shape == (256, 256), patch_mask.shape
-                        assert snakes[0].shape == (65, 2), snakes[0].shape
                         yield(patch, patch_mask, snakes[0])
                     else:
                         lens = [s.shape[0] for s in snakes]

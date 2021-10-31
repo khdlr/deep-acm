@@ -43,8 +43,8 @@ def get_optimizer():
         init_value=1e-7,
         peak_value=1e-3,
         warmup_steps=1024,
-        decay_steps=20000-1024,
-        end_value=3e-5
+        decay_steps=40000-1024,
+        end_value=1e-4
     )
     return optax.adam(lr_schedule, b1=0.5, b2=0.9)
 
@@ -115,11 +115,11 @@ def train_step(batch, state, key, net):
         (snake_preds, aux), buffers = net(params, state.buffers, model_key, img, is_training=True)
 
         loss_terms = {}
-        for iteration in snake_preds:
-            loss = jnp.mean(jax.vmap(loss_fn)(snake_pred, snake))
-            loss_terms[f'snake_loss_step{iteration}'] = loss
+        for i, pred in enumerate(snake_preds, 1):
+            loss = jnp.mean(jax.vmap(loss_fn)(pred, snake))
+            loss_terms[f'snake_loss_step{i}'] = loss
 
-        return sum(loss_terms.values()), (buffers, snake_pred, loss_terms)
+        return sum(loss_terms.values()), (buffers, snake_preds[-1], loss_terms)
 
     (loss, (buffers, prediction, metrics)), gradients = jax.value_and_grad(calculate_loss, has_aux=True)(state.params)
     updates, new_opt = optimizer(gradients, state.opt, state.params)
@@ -139,12 +139,12 @@ def train_step(batch, state, key, net):
 @partial(jax.jit, static_argnums=3)
 def val_step(batch, state, key, net):
     imagery, contours = prep(batch)
-    predictions, _ = net(state.params, state.buffers, key, imagery, is_training=False)
+    (predictions, _), _ = net(state.params, state.buffers, key, imagery, is_training=False)
 
     metrics = {}
-    for iteration in predictions:
-        loss = jnp.mean(jax.vmap(loss_fn)(snake_pred, snake))
-        metrics[f'snake_loss_step{iteration}'] = loss
+    for i, pred in enumerate(predictions, 1):
+        loss = jnp.mean(jax.vmap(loss_fn)(pred, contours))
+        metrics[f'snake_loss_step{i}'] = loss
 
     pred = predictions[-1]
     for m in METRICS:
@@ -196,7 +196,7 @@ if __name__ == '__main__':
 
     # Initialize model and optimizer state
     opt_init, _ = get_optimizer()
-    params, buffers = S.init(jax.random.PRNGKey(39), img, is_training=True)
+    params, buffers = S.init(jax.random.PRNGKey(39), img[:1], is_training=True)
     state = TrainingState(params=params, buffers=buffers, opt=opt_init(params))
     net = S.apply
 
@@ -216,19 +216,16 @@ if __name__ == '__main__':
             for m in metrics:
               if m not in trn_metrics: trn_metrics[m] = []
               trn_metrics[m].append(metrics[m])
-            if step % 10 == 0 or step == len(prog):
-                losses = []
-                prog.set_description(f'{np.mean(trn_metrics["loss"]):.3f}')
+
+        log_metrics(trn_metrics, 'trn', epoch)
+        if epoch % 10 != 0:
+            continue
 
         # Save Checkpoint
         ckpt_dir = Path('checkpoints')
         ckpt_dir.mkdir(exist_ok=True)
         save_state(state, ckpt_dir / f'{wandb.run.id}-latest.npz')
         save_state(state, ckpt_dir / f'{wandb.run.id}-{epoch:04d}.npz')
-        log_metrics(trn_metrics, 'trn', epoch)
-
-        if epoch % 20 != 0:
-            continue
 
         # Validate
         val_key = persistent_val_key

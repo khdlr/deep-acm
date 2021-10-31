@@ -4,7 +4,7 @@ import haiku as hk
 
 from . import backbones
 from . import nnutils as nn
-from .snake_utils import SnakeHead, AuxHead
+from .snake_utils import SnakeHead, AuxHead, channel_dropout
 
 class DeepSnake():
     def __init__(self, backbone, vertices=64,
@@ -21,6 +21,9 @@ class DeepSnake():
         backbone = self.backbone()
         feature_maps = backbone(imagery, is_training)
 
+        if is_training:
+            feature_maps = [channel_dropout(f, 0.5) for f in feature_maps]
+
         vertices = jnp.zeros([imagery.shape[0], self.vertices, 2])
         steps = [vertices]
 
@@ -29,9 +32,9 @@ class DeepSnake():
 
         for _ in range(self.iterations):
             if self.stop_grad:
-                vertices = jax.lax.stop_grad(vertices)
+                vertices = jax.lax.stop_gradient(vertices)
             vertices = vertices + head(vertices, feature_maps)
             steps.append(vertices)
 
-        # aux_pred = AuxHead(*imagery.shape[1:3])(feature_maps)
+        aux_pred = AuxHead(*imagery.shape[1:3])(feature_maps)
         return steps, aux_pred

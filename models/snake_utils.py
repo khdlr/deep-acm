@@ -6,6 +6,20 @@ from . import nnutils as nn
 from functools import partial
 
 
+def channel_dropout(x, rate):
+    if rate < 0 or rate >= 1:
+        raise ValueError("rate must be in [0, 1).")
+
+    if rate == 0.0:
+        return x
+
+    keep_rate = 1.0 - rate
+    mask_shape = (x.shape[0], *((1,) * (x.ndim-2)), x.shape[-1])
+
+    keep = jax.random.bernoulli(hk.next_rng_key(), keep_rate, shape=mask_shape)
+    return keep * x / keep_rate
+
+
 def subdivide_polyline(polyline):
     B, T, C = polyline.shape
     T_new = T * 2 - 1
