@@ -36,5 +36,4 @@ class DeepSnake():
             vertices = vertices + head(vertices, feature_maps)
             steps.append(vertices)
 
-        aux_pred = AuxHead(*imagery.shape[1:3])(feature_maps)
-        return steps, aux_pred
+        return steps

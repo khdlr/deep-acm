@@ -40,11 +40,14 @@ class AbstractDTW(ABC):
     def minimum(self, *args):
         pass
 
+    def build_distance_matrix(self, prediction, ground_truth):
+        return distance_matrix(prediction, ground_truth)
+
     def __call__(self, prediction, ground_truth):
         return self.dtw(prediction, ground_truth)
 
     def dtw(self, prediction, ground_truth):
-        D = distance_matrix(prediction, ground_truth)
+        D = self.build_distance_matrix(prediction, ground_truth)
         # wlog: H >= W
         if D.shape[0] < D.shape[1]:
             D = D.T
@@ -81,6 +84,13 @@ class AbstractDTW(ABC):
 
         carry, ys = jax.lax.scan(scan_step, init, model_matrix[2:], unroll=4)
         return carry[1][-1]
+
+
+class ProbDTWMixin:
+    def build_distance_matrix(self, prediction, ground_truth):
+        ground_truth = rearrange(ground_truth, 'T C -> T 1 C')
+        log_prob = jax.vmap(prediction.log_prob, ground_truth)
+        return log_prob
 
 
 class DTW(AbstractDTW):
@@ -141,21 +151,12 @@ class SoftDTW(AbstractDTW):
         # return -self.gamma * logsumexp
 
 
-class MixedDTW(AbstractDTW):
-    """
-    A mix of DTW and SoftDTW to circumvent numerical issues.
-    """
-    __name__ = 'SoftDTW'
+class ProbDTW(DTW, ProbDTWMixin):
+    pass
 
-    def __init__(self, softness=1.0):
-        assert gamma > 0, "Gamma needs to be positive."
-        self.softness = softness
-        self.__name__ = f'SoftDTW({self.gamma})'
 
-    def minimum(self, args, axis):
-        softmin = -logsumexp(-args, axis=axis)
-        min = jnp.min(args, axis=axis)
-        return (1 - self.softness) * min + self.softness * softmin
+class ProbSoftDTW(SoftDTW, ProbDTWMixin):
+    pass
 
 
 def forward_mae(prediction, ground_truth):

@@ -96,14 +96,6 @@ def prep(batch, key=None, augment=False, input_types=None):
     return outputs
 
 
-def update_net(state, loss_closure):
-    _, optimizer = get_optimizer()
-    (loss, (buffers, output, metrics)), gradients = jax.value_and_grad(loss_closure, has_aux=True)(state.params)
-    updates, opt = optimizer(gradients, state.opt, state.params)
-    params = optax.apply_updates(state.params, updates)
-    return TrainingState(params, buffers, opt), output, metrics
-
-
 @partial(jax.jit, static_argnums=3)
 def train_step(batch, state, key, net):
     _, optimizer = get_optimizer()
@@ -112,14 +104,13 @@ def train_step(batch, state, key, net):
     img, snake = prep(batch, aug_key, augment=True)
 
     def calculate_loss(params):
-        (snake_preds, aux), buffers = net(params, state.buffers, model_key, img, is_training=True)
-
+        snake_preds, buffers = net(params, state.buffers, model_key, img, is_training=True)
         loss_terms = {}
         for i, pred in enumerate(snake_preds, 1):
             loss = jnp.mean(jax.vmap(loss_fn)(pred, snake))
             loss_terms[f'snake_loss_step{i}'] = loss
-
-        return sum(loss_terms.values()), (buffers, snake_preds[-1], loss_terms)
+        pred = snake_preds[-1].loc
+        return sum(loss_terms.values()), (buffers, pred, loss_terms)
 
     (loss, (buffers, prediction, metrics)), gradients = jax.value_and_grad(calculate_loss, has_aux=True)(state.params)
     updates, new_opt = optimizer(gradients, state.opt, state.params)
@@ -139,14 +130,19 @@ def train_step(batch, state, key, net):
 @partial(jax.jit, static_argnums=3)
 def val_step(batch, state, key, net):
     imagery, contours = prep(batch)
-    (predictions, _), _ = net(state.params, state.buffers, key, imagery, is_training=False)
+    keys = jax.random.split(key, 8)
+
+    predictions = []
+    for k in keys:
+        preds, _ = net(state.params, state.buffers, k, imagery, is_training=False)
+        predictions.append(preds)
 
     metrics = {}
-    for i, pred in enumerate(predictions, 1):
+    for i, pred in enumerate(predictions[0], 1):
         loss = jnp.mean(jax.vmap(loss_fn)(pred, contours))
         metrics[f'snake_loss_step{i}'] = loss
 
-    pred = predictions[-1]
+    pred = predictions[0][-1]
     for m in METRICS:
         metrics[m] = jnp.mean(jax.vmap(METRICS[m])(pred, contours))
 
@@ -174,11 +170,15 @@ if __name__ == '__main__':
 
     config = yaml.load(open('config.yml'), Loader=yaml.SafeLoader)
     lf = config['loss_function']
-    if lf.startswith('SoftDTW'):
-        gamma = float(lf[8:-1])
-        loss_fn = loss_functions.SoftDTW(gamma=gamma)
-    elif lf == 'DTW':
-        loss_fn = loss_functions.DTW()
+    if lf.endswith(')'):
+        lf_name, lf_arg = lf[:-1].split('(')
+        print(lf_name, lf_arg)
+        loss_cls = getattr(loss_functions, lf_name)
+        if lf_arg: 
+          lf_arg = float(lf_arg)
+          loss_fn = loss_cls(lf_arg)
+        else:
+          loss_fn = loss_cls()
     else:
         loss_fn = getattr(loss_functions, lf)
 
@@ -239,7 +239,6 @@ if __name__ == '__main__':
 
             imagery, contours, predictions = inspection
             predictions = [p[0] for p in predictions]
-            log_image(imagery[0], contours[0], predictions, f"Imgs/{step}", epoch)
-            log_anim(imagery[0], contours[0], predictions, f"Animated/{step}", epoch)
+            log_anim(imagery[0], contours[0], *predictions, f"Animated/{step}", epoch)
 
         log_metrics(val_metrics, 'val', epoch)
