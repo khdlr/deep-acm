@@ -109,7 +109,7 @@ def train_step(batch, state, key, net):
         for i, pred in enumerate(snake_preds, 1):
             loss = jnp.mean(jax.vmap(loss_fn)(pred, snake))
             loss_terms[f'snake_loss_step{i}'] = loss
-        pred = snake_preds[-1].loc
+        pred = snake_preds[-1]['loc']
         return sum(loss_terms.values()), (buffers, pred, loss_terms)
 
     (loss, (buffers, prediction, metrics)), gradients = jax.value_and_grad(calculate_loss, has_aux=True)(state.params)
@@ -133,20 +133,22 @@ def val_step(batch, state, key, net):
     keys = jax.random.split(key, 8)
 
     predictions = []
+    vertices = []
     for k in keys:
         preds, _ = net(state.params, state.buffers, k, imagery, is_training=False)
         predictions.append(preds)
+        vertices.append([p['loc'] for p in preds])
 
     metrics = {}
     for i, pred in enumerate(predictions[0], 1):
         loss = jnp.mean(jax.vmap(loss_fn)(pred, contours))
         metrics[f'snake_loss_step{i}'] = loss
 
-    pred = predictions[0][-1]
+    pred = vertices[0][-1]
     for m in METRICS:
         metrics[m] = jnp.mean(jax.vmap(METRICS[m])(pred, contours))
 
-    return metrics, imagery, contours, predictions
+    return metrics, imagery, contours, vertices
 
 
 def save_state(state, out_path):
@@ -206,20 +208,20 @@ if __name__ == '__main__':
 
     for epoch in range(1, 1001):
         wandb.log({f'epoch': epoch}, step=epoch)
-        prog = tqdm(train_loader, desc=f'Ep {epoch} Trn')
-        trn_metrics = {}
-        loss_ary = None
-        for step, batch in enumerate(prog, 1):
-            train_key, subkey = jax.random.split(train_key)
-            metrics, state = train_step(batch, state, subkey, net)
+        # prog = tqdm(train_loader, desc=f'Ep {epoch} Trn')
+        # trn_metrics = {}
+        # loss_ary = None
+        # for step, batch in enumerate(prog, 1):
+        #     train_key, subkey = jax.random.split(train_key)
+        #     metrics, state = train_step(batch, state, subkey, net)
 
-            for m in metrics:
-              if m not in trn_metrics: trn_metrics[m] = []
-              trn_metrics[m].append(metrics[m])
+        #     for m in metrics:
+        #       if m not in trn_metrics: trn_metrics[m] = []
+        #       trn_metrics[m].append(metrics[m])
 
-        log_metrics(trn_metrics, 'trn', epoch)
-        if epoch % 10 != 0:
-            continue
+        # log_metrics(trn_metrics, 'trn', epoch)
+        # if epoch % 10 != 0:
+        #     continue
 
         # Save Checkpoint
         ckpt_dir = Path('checkpoints')
@@ -239,6 +241,6 @@ if __name__ == '__main__':
 
             imagery, contours, predictions = inspection
             predictions = [p[0] for p in predictions]
-            log_anim(imagery[0], contours[0], *predictions, f"Animated/{step}", epoch)
+            log_anim(imagery[0], contours[0], predictions, f"Animated/{step}", epoch)
 
         log_metrics(val_metrics, 'val', epoch)

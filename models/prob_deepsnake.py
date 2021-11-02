@@ -6,7 +6,7 @@ tfd = tfp.distributions
 
 from . import backbones
 from . import nnutils as nn
-from .snake_utils import SnakeHead, channel_dropout
+from .snake_utils import channel_dropout, sample_at_vertices
 
 
 class ProbabilisticDeepSnake():
@@ -28,21 +28,20 @@ class ProbabilisticDeepSnake():
             feature_maps = [channel_dropout(f, 0.5) for f in feature_maps]
 
         vertices = jnp.zeros([imagery.shape[0], self.vertices, 2])
-        steps = [vertices]
+        steps = []
 
-        head = SnakeHead(self.model_dim, self.coord_features)
+        head = ProbabilisticSnakeHead(self.model_dim, self.coord_features)
 
         for _ in range(self.iterations):
             if self.stop_grad:
                 vertices = jax.lax.stop_gradient(vertices)
 
             mu, tril = head(vertices, feature_maps)
+            loc = vertices + mu
+            params = {'loc': loc, 'scale_tril': tril}
             # TODO: Don't validate args when sure that they're fine
-            P = tfd.MultivariateNormalTriL(
-                loc=vertices + mu,
-                scale_tril=tril,
-                validate_args=True)
-            steps.append(P)
+            P = tfd.MultivariateNormalTriL(**params, validate_args=True)
+            steps.append(params)
 
             if inference_mode == 'sample':
                 vertices = P.sample(seed=hk.next_rng_key())

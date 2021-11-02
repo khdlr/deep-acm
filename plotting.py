@@ -99,7 +99,8 @@ def animated_path(paths):
           <animate attributeName="d" values="{pathvalues}" keyTimes="{keytimes}"  dur="3s" repeatCount="indefinite"/>
           """
 
-def log_anim(img, truth, *preds, tag, step):
+
+def log_anim(img, truth, preds, tag, step):
     H, W, C = img.shape
 
     img = img[:, :, RGB]

@@ -6,6 +6,9 @@ from abc import ABC, abstractmethod
 from utils import pad_inf, fmt, distance_matrix
 from metrics import squared_distance_points_to_best_segment
 from lib.jump_flood import jump_flood
+from einops import rearrange
+import tensorflow_probability.substrates.jax as tfp
+tfd = tfp.distributions
 
 
 def l2_loss(prediction, ground_truth):
@@ -88,8 +91,9 @@ class AbstractDTW(ABC):
 
 class ProbDTWMixin:
     def build_distance_matrix(self, prediction, ground_truth):
+        P = tfd.MultivariateNormalTriL(**prediction)
         ground_truth = rearrange(ground_truth, 'T C -> T 1 C')
-        log_prob = jax.vmap(prediction.log_prob, ground_truth)
+        log_prob = jax.vmap(P.log_prob)(ground_truth)
         return log_prob
 
 
@@ -151,11 +155,11 @@ class SoftDTW(AbstractDTW):
         # return -self.gamma * logsumexp
 
 
-class ProbDTW(DTW, ProbDTWMixin):
+class ProbDTW(ProbDTWMixin, DTW):
     pass
 
 
-class ProbSoftDTW(SoftDTW, ProbDTWMixin):
+class ProbSoftDTW(ProbDTWMixin, SoftDTW):
     pass
 
 

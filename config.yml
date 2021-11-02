@@ -1,5 +1,5 @@
 # Model Specification
-model: DeepSnake
+model: ProbabilisticDeepSnake
 model_args:
   backbone: ResNet50
   model_dim: 1024
@@ -8,7 +8,7 @@ model_args:
   stop_grad: true
 loss_function: ProbSoftDTW(0.001)
 # Data args
-batch_size: 32
+batch_size: 4
 data_root: '../CALFIN/training/data'
 tile_size: 256
 vertices: 64
