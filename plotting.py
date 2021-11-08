@@ -89,14 +89,15 @@ def log_video(img, truth, preds, tag, step):
 
 
 def make_path_string(vertices):
-    return 'M' + ' L'.join(f'{x},{y}' for y, x in vertices)
+    return 'M' + ' L'.join(f'{x:.2f},{y:.2f}' for y, x in vertices)
 
 
 def animated_path(paths):
     pathvalues = ";".join(make_path_string(path) for path in paths)
     keytimes = ";".join(f'{x:.2f}' for x in np.linspace(0, 1, len(paths)))
-    return """<path fill="none" stroke="hsl(139, 99%, 56%)" stroke-width="2">
-          <animate attributeName="d" values="{pathvalues}" keyTimes="{keytimes}"  dur="3s" repeatCount="indefinite"/>
+    return f"""<path fill="none" stroke="rgb(255, 255, 0)" stroke-width="1">
+          <animate attributeName="d" values="{pathvalues}" keyTimes="{keytimes}" dur="3s" repeatCount="indefinite" />
+          </path>
           """
 
 
@@ -115,7 +116,7 @@ def log_anim(img, truth, preds, tag, step):
 
     path_html = ""
     for pred in preds:
-        pred = [0.5 * H * (1 + p) for p in preds]
+        pred = [0.5 * H * (1 + p) for p in pred]
         pred = pred + [pred[-1], pred[-1]]
         path_html += animated_path(pred)
 

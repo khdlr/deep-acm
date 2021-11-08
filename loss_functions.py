@@ -30,6 +30,13 @@ def l1_loss(prediction, ground_truth):
     return loss
 
 
+def nll_loss(prediction, ground_truth):
+    P = tfd.MultivariateNormalTriL(**prediction)
+    ground_truth = rearrange(ground_truth, 'T C -> T 1 C')
+    log_prob = P.log_prob(ground_truth)
+    return -log_prob
+
+
 def min_min_loss(prediction, ground_truth):
     D = distance_matrix(prediction, ground_truth)
     min1 = D.min(axis=0)
@@ -39,28 +46,36 @@ def min_min_loss(prediction, ground_truth):
 
 
 class AbstractDTW(ABC):
+    def __init__(self, bandwidth=None):
+        self.bandwidth = bandwidth
+        
     @abstractmethod
     def minimum(self, *args):
         pass
-
-    def build_distance_matrix(self, prediction, ground_truth):
-        return distance_matrix(prediction, ground_truth)
 
     def __call__(self, prediction, ground_truth):
         return self.dtw(prediction, ground_truth)
 
     def dtw(self, prediction, ground_truth):
-        D = self.build_distance_matrix(prediction, ground_truth)
+        D = distance_matrix(prediction, ground_truth)
         # wlog: H >= W
         if D.shape[0] < D.shape[1]:
             D = D.T
         H, W = D.shape
-
-        rows = []
-        for row in range(H):
-            rows.append( pad_inf(D[row], row, H-row-1) )
-
-        model_matrix = jnp.stack(rows, axis=1)
+        
+        if self.bandwidth is not None:
+            i, j = jnp.mgrid[0:H, 0:W]
+            D = jnp.where(jnp.abs(i - j) > self.bandwidth,
+                jnp.inf,
+                D
+            )
+        
+        y, x = jnp.mgrid[0:W+H-1, 0:H]
+        indices = y - x
+        model_matrix = jnp.where((indices < 0) | (indices >= W),
+            jnp.inf,
+            jnp.take_along_axis(D.T, indices, axis=0)
+        )
 
         init = (
             pad_inf(model_matrix[0], 1, 0),
@@ -80,11 +95,6 @@ class AbstractDTW(ABC):
 
             return (one_ago, next_row), next_row
 
-        # Manual unrolling:
-        # carry = init
-        # for i, row in enumerate(model_matrix[2:]):
-        #     carry, y = scan_step(carry, row)
-
         carry, ys = jax.lax.scan(scan_step, init, model_matrix[2:], unroll=4)
         return carry[1][-1]
 
@@ -94,7 +104,7 @@ class ProbDTWMixin:
         P = tfd.MultivariateNormalTriL(**prediction)
         ground_truth = rearrange(ground_truth, 'T C -> T 1 C')
         log_prob = jax.vmap(P.log_prob)(ground_truth)
-        return log_prob
+        return -log_prob
 
 
 class DTW(AbstractDTW):
@@ -140,7 +150,8 @@ class SoftDTW(AbstractDTW):
     """
     __name__ = 'SoftDTW'
 
-    def __init__(self, gamma=1.0):
+    def __init__(self, gamma=1.0, bandwidth=None):
+        super().__init__(bandwidth)
         assert gamma > 0, "Gamma needs to be positive."
         self.gamma = gamma
         self.__name__ = f'SoftDTW({self.gamma})'
@@ -149,11 +160,6 @@ class SoftDTW(AbstractDTW):
     def minimum(self, args):
         return self.minimum_impl(args)
 
-        # args = jnp.stack(args, axis=-1) / -self.gamma
-        # maxval = jnp.max(args, axis=-1, keepdims=True)
-        # logsumexp = jnp.log(jnp.sum(jnp.exp(args - maxval), axis=-1)) + maxval[..., 0]
-        # return -self.gamma * logsumexp
-
 
 class ProbDTW(ProbDTWMixin, DTW):
     pass
@@ -161,6 +167,12 @@ class ProbDTW(ProbDTWMixin, DTW):
 
 class ProbSoftDTW(ProbDTWMixin, SoftDTW):
     pass
+
+
+def spacing_loss(prediction, ground_truth):
+    dist = jnp.sum(jnp.square(prediction[1:] - prediction[:-1]), axis=-1)
+    variation = jnp.std(dist)
+    return variation
 
 
 def forward_mae(prediction, ground_truth):

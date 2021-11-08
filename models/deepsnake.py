@@ -37,3 +37,27 @@ class DeepSnake():
             steps.append(vertices)
 
         return steps
+
+
+class PerturbedDeepSnake(DeepSnake):
+    def __call__(self, imagery, is_training=False):
+        backbone = self.backbone()
+        feature_maps = backbone(imagery, is_training)
+
+        # if is_training:
+        feature_maps = [channel_dropout(f, 0.5) for f in feature_maps]
+
+        mkrand = lambda: 0.01 * jax.random.normal(hk.next_rng_key(), [imagery.shape[0], self.vertices, 2])
+        vertices = mkrand()
+        steps = [vertices]
+
+        _head = SnakeHead(self.model_dim, self.coord_features)
+        head = lambda x, y: _head(x, y)
+
+        for _ in range(self.iterations):
+            if self.stop_grad:
+                vertices = jax.lax.stop_gradient(vertices)
+            vertices = vertices + head(vertices, feature_maps) + mkrand()
+            steps.append(vertices)
+
+        return steps

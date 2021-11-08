@@ -44,7 +44,7 @@ def get_optimizer():
         peak_value=1e-3,
         warmup_steps=1024,
         decay_steps=40000-1024,
-        end_value=1e-4
+        end_value=1e-5
     )
     return optax.adam(lr_schedule, b1=0.5, b2=0.9)
 
@@ -106,10 +106,12 @@ def train_step(batch, state, key, net):
     def calculate_loss(params):
         snake_preds, buffers = net(params, state.buffers, model_key, img, is_training=True)
         loss_terms = {}
-        for i, pred in enumerate(snake_preds, 1):
+        for i, pred in enumerate(snake_preds[1:], 1):
             loss = jnp.mean(jax.vmap(loss_fn)(pred, snake))
-            loss_terms[f'snake_loss_step{i}'] = loss
-        pred = snake_preds[-1]['loc']
+            loss_terms[f'loss_{i}'] = loss
+
+        if isinstance(pred, dict):
+            pred = pred['loc']
         return sum(loss_terms.values()), (buffers, pred, loss_terms)
 
     (loss, (buffers, prediction, metrics)), gradients = jax.value_and_grad(calculate_loss, has_aux=True)(state.params)
@@ -137,12 +139,16 @@ def val_step(batch, state, key, net):
     for k in keys:
         preds, _ = net(state.params, state.buffers, k, imagery, is_training=False)
         predictions.append(preds)
-        vertices.append([p['loc'] for p in preds])
+
+        if isinstance(preds[0], dict):
+            vertices.append([p['loc'] for p in preds])
+        else:
+            vertices.append(preds)
 
     metrics = {}
-    for i, pred in enumerate(predictions[0], 1):
+    for i, pred in enumerate(predictions[0][1:], 1):
         loss = jnp.mean(jax.vmap(loss_fn)(pred, contours))
-        metrics[f'snake_loss_step{i}'] = loss
+        metrics[f'loss_{i}'] = loss
 
     pred = vertices[0][-1]
     for m in METRICS:
@@ -173,14 +179,13 @@ if __name__ == '__main__':
     config = yaml.load(open('config.yml'), Loader=yaml.SafeLoader)
     lf = config['loss_function']
     if lf.endswith(')'):
-        lf_name, lf_arg = lf[:-1].split('(')
-        print(lf_name, lf_arg)
+        lf_name, lf_args = lf[:-1].split('(')
         loss_cls = getattr(loss_functions, lf_name)
-        if lf_arg: 
-          lf_arg = float(lf_arg)
-          loss_fn = loss_cls(lf_arg)
+        if lf_args: 
+            lf_args = yaml.load(f'[{lf_args}]', Loader=yaml.SafeLoader)
+            loss_fn = loss_cls(*lf_args)
         else:
-          loss_fn = loss_cls()
+            loss_fn = loss_cls()
     else:
         loss_fn = getattr(loss_functions, lf)
 
@@ -208,20 +213,21 @@ if __name__ == '__main__':
 
     for epoch in range(1, 1001):
         wandb.log({f'epoch': epoch}, step=epoch)
-        # prog = tqdm(train_loader, desc=f'Ep {epoch} Trn')
-        # trn_metrics = {}
-        # loss_ary = None
-        # for step, batch in enumerate(prog, 1):
-        #     train_key, subkey = jax.random.split(train_key)
-        #     metrics, state = train_step(batch, state, subkey, net)
+        prog = tqdm(train_loader, desc=f'Ep {epoch} Trn')
+        trn_metrics = {}
+        loss_ary = None
+        for step, batch in enumerate(prog, 1):
+            train_key, subkey = jax.random.split(train_key)
+            metrics, state = train_step(batch, state, subkey, net)
 
-        #     for m in metrics:
-        #       if m not in trn_metrics: trn_metrics[m] = []
-        #       trn_metrics[m].append(metrics[m])
+            for m in metrics:
+              if m not in trn_metrics: trn_metrics[m] = []
+              trn_metrics[m].append(metrics[m])
 
-        # log_metrics(trn_metrics, 'trn', epoch)
-        # if epoch % 10 != 0:
-        #     continue
+        log_metrics(trn_metrics, 'trn', epoch)
+
+        if epoch % 10 != 0:
+            continue
 
         # Save Checkpoint
         ckpt_dir = Path('checkpoints')
@@ -240,7 +246,7 @@ if __name__ == '__main__':
               val_metrics[m].append(metrics[m])
 
             imagery, contours, predictions = inspection
-            predictions = [p[0] for p in predictions]
+            predictions = [[p[0] for p in pred] for pred in predictions]
             log_anim(imagery[0], contours[0], predictions, f"Animated/{step}", epoch)
 
         log_metrics(val_metrics, 'val', epoch)
