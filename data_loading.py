@@ -69,7 +69,6 @@ def get_loader(batch_size, data_threads, mode, rng_key):
 
 def snakify(gt, vertices):
     contours = find_contours(gt, 0.5)
-    # Select the longest contour
 
     out_contours = []
     for contour in contours:
@@ -178,10 +177,10 @@ class CalfinDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         snake = self.snake_cache[idx]
-        # mask  = self.mask_cache[idx]
+        mask  = self.mask_cache[idx]
         ref   = self.tile_cache[idx]
 
-        return ref, snake
+        return ref, mask, snake
 
     def __len__(self):
         return len(self.snake_cache)

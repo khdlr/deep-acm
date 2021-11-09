@@ -1,14 +1,10 @@
 # Model Specification
-model: DeepSnake
+model: UNet
 model_args:
-  backbone: ResNet50
-  model_dim: 1024
-  iterations: 5
-  coord_features: true
-  stop_grad: true
-loss_function: SoftDTW(0.001, 8)
+  width: 64
+loss_function: cce
 # Data args
-batch_size: 64
+batch_size: 16
 data_root: '../CALFIN/training/data'
 tile_size: 256
 vertices: 64

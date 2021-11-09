@@ -1,48 +1,78 @@
 import jax
 import jax.numpy as jnp
 from jax.scipy.special import logsumexp
+
 from abc import ABC, abstractmethod
+from inspect import signature
 
 from utils import pad_inf, fmt, distance_matrix
 from metrics import squared_distance_points_to_best_segment
 from lib.jump_flood import jump_flood
 from einops import rearrange
-import tensorflow_probability.substrates.jax as tfp
-tfd = tfp.distributions
 
 
-def l2_loss(prediction, ground_truth):
-    if prediction.shape[0] < ground_truth.shape[0]:
-        prediction = jax.image.resize(prediction, ground_truth.shape, 'linear')
-    elif ground_truth.shape[0] < prediction.shape[0]:
-        ground_truth = jax.image.resize(ground_truth, prediction.shape, 'linear')
-    loss = jnp.sum(jnp.square(prediction - ground_truth), axis=-1)
+def call_loss(loss_fn, prediction, mask, snake, key='loss'):
+    sig = signature(loss_fn)
+    args = {}
+    if 'snake' in sig.parameters:
+        args['snake'] = snake
+    if 'mask' in sig.parameters:
+        args['mask'] = mask
+
+    loss_terms = {}
+    if isinstance(prediction, list):
+        for i, pred in enumerate(prediction, 1):
+            loss_terms[f'{key}_{i}'] = jnp.mean(jax.vmap(loss_fn)(prediction=pred, **args))
+    else:
+        loss_terms[key] = jnp.mean(jax.vmap(loss_fn)(prediction=prediction, **args))
+
+    return loss_terms
+
+
+def l2_loss(prediction, snake):
+    if prediction.shape[0] < snake.shape[0]:
+        prediction = jax.image.resize(prediction, snake.shape, 'linear')
+    elif snake.shape[0] < prediction.shape[0]:
+        snake = jax.image.resize(snake, prediction.shape, 'linear')
+    loss = jnp.sum(jnp.square(prediction - snake), axis=-1)
     loss = jnp.mean(loss)
     return loss
 
 
-def l1_loss(prediction, ground_truth):
-    if prediction.shape[0] < ground_truth.shape[0]:
-        prediction = jax.image.resize(prediction, ground_truth.shape, 'linear')
-    elif ground_truth.shape[0] < prediction.shape[0]:
-        ground_truth = jax.image.resize(ground_truth, prediction.shape, 'linear')
-    loss = jnp.sum(jnp.abs(prediction - ground_truth), axis=-1)
+def l1_loss(prediction, snake):
+    if prediction.shape[0] < snake.shape[0]:
+        prediction = jax.image.resize(prediction, snake.shape, 'linear')
+    elif snake.shape[0] < prediction.shape[0]:
+        snake = jax.image.resize(snake, prediction.shape, 'linear')
+    loss = jnp.sum(jnp.abs(prediction - snake), axis=-1)
     return loss
 
 
-def nll_loss(prediction, ground_truth):
-    P = tfd.MultivariateNormalTriL(**prediction)
-    ground_truth = rearrange(ground_truth, 'T C -> T 1 C')
-    log_prob = P.log_prob(ground_truth)
-    return -log_prob
-
-
-def min_min_loss(prediction, ground_truth):
-    D = distance_matrix(prediction, ground_truth)
+def min_min_loss(prediction, snake):
+    D = distance_matrix(prediction, snake)
     min1 = D.min(axis=0)
     min2 = D.min(axis=1)
     min_min = 0.5 * (jnp.mean(min1) + jnp.mean(min2))
     return min_min
+
+
+def min_min_loss(prediction, snake):
+    D = distance_matrix(prediction, snake)
+    min1 = D.min(axis=0)
+    min2 = D.min(axis=1)
+    min_min = 0.5 * (jnp.mean(min1) + jnp.mean(min2))
+    return min_min
+
+
+def cce(prediction, mask):
+    prediction = prediction[..., 0]
+    logp   = jax.nn.log_sigmoid(prediction)
+    log1mp = jax.nn.log_sigmoid(-prediction)
+    mask   = jnp.expand_dims(mask, -1)
+    loss   = -logp * mask - (log1mp) * (1-mask)
+
+    return jnp.mean(loss)
+
 
 
 class AbstractDTW(ABC):
@@ -53,11 +83,11 @@ class AbstractDTW(ABC):
     def minimum(self, *args):
         pass
 
-    def __call__(self, prediction, ground_truth):
-        return self.dtw(prediction, ground_truth)
+    def __call__(self, prediction, snake):
+        return self.dtw(prediction, snake)
 
-    def dtw(self, prediction, ground_truth):
-        D = distance_matrix(prediction, ground_truth)
+    def dtw(self, prediction, snake):
+        D = distance_matrix(prediction, snake)
         # wlog: H >= W
         if D.shape[0] < D.shape[1]:
             D = D.T
@@ -97,14 +127,6 @@ class AbstractDTW(ABC):
 
         carry, ys = jax.lax.scan(scan_step, init, model_matrix[2:], unroll=4)
         return carry[1][-1]
-
-
-class ProbDTWMixin:
-    def build_distance_matrix(self, prediction, ground_truth):
-        P = tfd.MultivariateNormalTriL(**prediction)
-        ground_truth = rearrange(ground_truth, 'T C -> T 1 C')
-        log_prob = jax.vmap(P.log_prob)(ground_truth)
-        return -log_prob
 
 
 class DTW(AbstractDTW):
@@ -161,37 +183,23 @@ class SoftDTW(AbstractDTW):
         return self.minimum_impl(args)
 
 
-class ProbDTW(ProbDTWMixin, DTW):
-    pass
-
-
-class ProbSoftDTW(ProbDTWMixin, SoftDTW):
-    pass
-
-
-def spacing_loss(prediction, ground_truth):
-    dist = jnp.sum(jnp.square(prediction[1:] - prediction[:-1]), axis=-1)
-    variation = jnp.std(dist)
-    return variation
-
-
-def forward_mae(prediction, ground_truth):
-    squared_dist = squared_distance_points_to_best_segment(prediction, ground_truth)
+def forward_mae(prediction, snake):
+    squared_dist = squared_distance_points_to_best_segment(prediction, snake)
     return jnp.mean(jnp.sqrt(squared_dist))
 
 
-def backward_mae(prediction, ground_truth):
-    squared_dist = squared_distance_points_to_best_segment(ground_truth, prediction)
+def backward_mae(prediction, snake):
+    squared_dist = squared_distance_points_to_best_segment(snake, prediction)
     return jnp.mean(jnp.sqrt(squared_dist))
 
 
-def forward_rmse(prediction, ground_truth):
-    squared_dist = squared_distance_points_to_best_segment(prediction, ground_truth)
+def forward_rmse(prediction, snake):
+    squared_dist = squared_distance_points_to_best_segment(prediction, snake)
     return jnp.sqrt(jnp.mean(squared_dist))
 
 
-def backward_rmse(prediction, ground_truth):
-    squared_dist = squared_distance_points_to_best_segment(ground_truth, prediction)
+def backward_rmse(prediction, snake):
+    squared_dist = squared_distance_points_to_best_segment(snake, prediction)
     return jnp.sqrt(jnp.mean(squared_dist))
 
 

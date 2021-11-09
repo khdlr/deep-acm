@@ -2,6 +2,7 @@ import yaml
 from typing import NamedTuple, Any
 import pickle
 from pathlib import Path
+from inspect import signature
 
 import numpy as np
 import jax
@@ -21,6 +22,7 @@ import sys
 import augmax
 
 import models
+import utils
 import loss_functions
 from plotting import log_image, log_anim
 
@@ -81,6 +83,7 @@ def prep(batch, key=None, augment=False, input_types=None):
     if input_types is None:
         input_types = [
             augmax.InputType.IMAGE,
+            augmax.InputType.MASK,
             augmax.InputType.CONTOUR,
         ]
     chain = augmax.Chain(*ops, input_types=input_types)
@@ -101,26 +104,26 @@ def train_step(batch, state, key, net):
     _, optimizer = get_optimizer()
 
     aug_key, model_key = jax.random.split(key)
-    img, snake = prep(batch, aug_key, augment=True)
+    img, mask, snake = prep(batch, aug_key, augment=True)
 
     def calculate_loss(params):
-        snake_preds, buffers = net(params, state.buffers, model_key, img, is_training=True)
-        loss_terms = {}
-        for i, pred in enumerate(snake_preds[1:], 1):
-            loss = jnp.mean(jax.vmap(loss_fn)(pred, snake))
-            loss_terms[f'loss_{i}'] = loss
+        preds, buffers = net(params, state.buffers, model_key, img, is_training=True)
+        loss_terms = loss_functions.call_loss(loss_fn, preds, mask, snake)
 
-        if isinstance(pred, dict):
-            pred = pred['loc']
-        return sum(loss_terms.values()), (buffers, pred, loss_terms)
+        if isinstance(preds, list):
+            preds = preds[-1]
+
+        return sum(loss_terms.values()), (buffers, preds, loss_terms)
 
     (loss, (buffers, prediction, metrics)), gradients = jax.value_and_grad(calculate_loss, has_aux=True)(state.params)
     updates, new_opt = optimizer(gradients, state.opt, state.params)
     new_params = optax.apply_updates(state.params, updates)
+    
+    if prediction.shape[-1] != 2:
+        prediction = utils.snakify(prediction, snake.shape[-2])
 
-    metrics['loss'] = loss
     for m in METRICS:
-        metrics[m] = jnp.mean(jax.vmap(METRICS[m])(prediction, snake))
+        metrics.update(loss_functions.call_loss(METRICS[m], prediction, mask, snake, key=m))
 
     return metrics, changed_state(state,
         params=new_params,
@@ -131,28 +134,23 @@ def train_step(batch, state, key, net):
 
 @partial(jax.jit, static_argnums=3)
 def val_step(batch, state, key, net):
-    imagery, contours = prep(batch)
-    keys = jax.random.split(key, 8)
+    imagery, mask, contours = prep(batch)
 
-    predictions = []
-    vertices = []
-    for k in keys:
-        preds, _ = net(state.params, state.buffers, k, imagery, is_training=False)
-        predictions.append(preds)
+    preds, _ = net(state.params, state.buffers, key, imagery, is_training=False)
+    metrics = loss_functions.call_loss(loss_fn, preds, mask, snake)
 
-        if isinstance(preds[0], dict):
-            vertices.append([p['loc'] for p in preds])
-        else:
-            vertices.append(preds)
+    if isinstance(preds, list):
+        vertices = preds
+        preds = preds[-1]
+    else:
+        vertices = [preds]
 
-    metrics = {}
-    for i, pred in enumerate(predictions[0][1:], 1):
-        loss = jnp.mean(jax.vmap(loss_fn)(pred, contours))
-        metrics[f'loss_{i}'] = loss
+    if preds.shape[-1] != 2:
+        preds = utils.snakify(preds, snake.shape[-2])
+        vertices = [preds]
 
-    pred = vertices[0][-1]
     for m in METRICS:
-        metrics[m] = jnp.mean(jax.vmap(METRICS[m])(pred, contours))
+        metrics.update(loss_functions.call_loss(METRICS[m], preds, mask, snake, key=m))
 
     return metrics, imagery, contours, vertices
 
@@ -190,8 +188,9 @@ if __name__ == '__main__':
         loss_fn = getattr(loss_functions, lf)
 
     model_args = config['model_args']
-    model_args['vertices'] = config['vertices']
     modelclass = getattr(models, config['model'])
+    if 'vertices' in signature(modelclass).parameters:
+        model_args['vertices'] = config['vertices']
     S = modelclass(**model_args)
     S = hk.transform_with_state(S)
 
@@ -199,7 +198,7 @@ if __name__ == '__main__':
     train_key, subkey = jax.random.split(train_key)
     train_loader = get_loader(config['batch_size'], 4, 'train', subkey)
     val_loader   = get_loader(16, 1, 'validation', None)
-    img, snake = prep(next(iter(train_loader)))
+    img, mask, snake = prep(next(iter(train_loader)))
 
     # Initialize model and optimizer state
     opt_init, _ = get_optimizer()
@@ -241,12 +240,13 @@ if __name__ == '__main__':
         for step, batch in enumerate(val_loader):
             val_key, subkey = jax.random.split(val_key)
             metrics, *inspection = val_step(batch, state, subkey, net)
+
             for m in metrics:
               if m not in val_metrics: val_metrics[m] = []
               val_metrics[m].append(metrics[m])
 
             imagery, contours, predictions = inspection
-            predictions = [[p[0] for p in pred] for pred in predictions]
+            predictions = [p[0] for p in predictions]
             log_anim(imagery[0], contours[0], predictions, f"Animated/{step}", epoch)
 
         log_metrics(val_metrics, 'val', epoch)

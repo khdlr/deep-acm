@@ -101,7 +101,7 @@ def animated_path(paths):
           """
 
 
-def log_anim(img, truth, preds, tag, step):
+def log_anim(img, truth, pred, tag, step):
     H, W, C = img.shape
 
     img = img[:, :, RGB]
@@ -114,11 +114,9 @@ def log_anim(img, truth, preds, tag, step):
     truth = 0.5 * H * (1 + truth)
     gtpath = make_path_string(truth)
 
-    path_html = ""
-    for pred in preds:
-        pred = [0.5 * H * (1 + p) for p in pred]
-        pred = pred + [pred[-1], pred[-1]]
-        path_html += animated_path(pred)
+    pred = [0.5 * H * (1 + p) for p in pred]
+    pred = pred + [pred[-1], pred[-1]]
+    path_html = animated_path(pred)
 
     html = f"""
     <!DOCTYPE html>
