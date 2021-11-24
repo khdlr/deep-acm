@@ -1,10 +1,13 @@
 import jax
 import jax.numpy as jnp
+import haiku as hk
 import numpy as np
 from einops import rearrange
 from jax.experimental import host_callback
 from skimage.measure import find_contours
 from functools import partial
+from typing import Union, Sequence, Optional, Tuple
+
 
 def distance_matrix(a, b):
     a = rearrange(a, '(true pred) d -> true pred d', true=1)
@@ -62,3 +65,52 @@ def snakify_host(args):
 
         res[i] = snake * (2.0 / mask.shape[0]) - 1.0
     return res
+
+
+def _infer_shape(
+    x: jnp.ndarray,
+    size: Union[int, Sequence[int]],
+    channel_axis: Optional[int] = -1,
+) -> Tuple[int, ...]:
+  """Infer shape for pooling window or strides."""
+  if isinstance(size, int):
+    if channel_axis and not 0 <= abs(channel_axis) < x.ndim:
+      raise ValueError(f"Invalid channel axis {channel_axis} for {x.shape}")
+    if channel_axis and channel_axis < 0:
+      channel_axis = x.ndim + channel_axis
+    return (1,) + tuple(size if d != channel_axis else 1
+                        for d in range(1, x.ndim))
+  elif len(size) < x.ndim:
+    # Assume additional dimensions are batch dimensions.
+    return (1,) * (x.ndim - len(size)) + tuple(size)
+  else:
+    assert x.ndim == len(size)
+    return tuple(size)
+
+
+def min_pool(
+    value: jnp.ndarray,
+    window_shape: Union[int, Sequence[int]],
+    strides: Union[int, Sequence[int]],
+    padding: str = "SAME",
+    channel_axis: Optional[int] = -1,
+) -> jnp.ndarray:
+  """Min pool.
+  Args:
+    value: Value to pool.
+    window_shape: Shape of the pooling window, an int or same rank as value.
+    strides: Strides of the pooling window, an int or same rank as value.
+    padding: Padding algorithm. Either ``VALID`` or ``SAME``.
+    channel_axis: Axis of the spatial channels for which pooling is skipped,
+      used to infer ``window_shape`` or ``strides`` if they are an integer.
+  Returns:
+    Pooled result. Same rank as value.
+  """
+  if padding not in ("SAME", "VALID"):
+    raise ValueError(f"Invalid padding '{padding}', must be 'SAME' or 'VALID'.")
+
+  window_shape = _infer_shape(value, window_shape, channel_axis)
+  strides = _infer_shape(value, strides, channel_axis)
+
+  return jax.lax.reduce_window(value, jnp.inf, jax.lax.min, window_shape, strides, padding)
+

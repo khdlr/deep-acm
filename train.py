@@ -24,7 +24,7 @@ import augmax
 import models
 import utils
 import loss_functions
-from plotting import log_image, log_anim
+from plotting import log_segmentation, log_anim
 
 
 METRICS = dict(
@@ -119,8 +119,9 @@ def train_step(batch, state, key, net):
     updates, new_opt = optimizer(gradients, state.opt, state.params)
     new_params = optax.apply_updates(state.params, updates)
     
-    if prediction.shape[-1] != 2:
-        prediction = utils.snakify(prediction, snake.shape[-2])
+    if prediction.ndim > 3:
+        prediction = utils.snakify(prediction[:1], snake.shape[-2])
+        snake = snake[:1]
 
     for m in METRICS:
         metrics.update(loss_functions.call_loss(METRICS[m], prediction, mask, snake, key=m))
@@ -134,7 +135,7 @@ def train_step(batch, state, key, net):
 
 @partial(jax.jit, static_argnums=3)
 def val_step(batch, state, key, net):
-    imagery, mask, contours = prep(batch)
+    imagery, mask, snake = prep(batch)
 
     preds, _ = net(state.params, state.buffers, key, imagery, is_training=False)
     metrics = loss_functions.call_loss(loss_fn, preds, mask, snake)
@@ -145,15 +146,22 @@ def val_step(batch, state, key, net):
     else:
         vertices = [preds]
 
-    if preds.shape[-1] != 2:
+    out = {
+        'imagery': imagery,
+        'snake': snake,
+        'mask': mask,
+    }
+
+    if preds.ndim > 3:
+        out['segmentation'] = preds
         preds = utils.snakify(preds, snake.shape[-2])
         vertices = [preds]
+    out['predictions'] = vertices
 
     for m in METRICS:
         metrics.update(loss_functions.call_loss(METRICS[m], preds, mask, snake, key=m))
 
-    return metrics, imagery, contours, vertices
-
+    return metrics, out
 
 def save_state(state, out_path):
     state = jax.device_get(state)
@@ -161,12 +169,13 @@ def save_state(state, out_path):
         pickle.dump(state, f)
 
 
-def log_metrics(metrics, prefix, epoch):
+def log_metrics(metrics, prefix, epoch, do_print=True):
     metrics = {m: np.mean(metrics[m]) for m in metrics}
 
     wandb.log({f'{prefix}/{m}': metrics[m] for m in metrics}, step=epoch)
-    print(f'{prefix}/metrics')
-    print(', '.join(f'{k}: {v:.3f}' for k, v in metrics.items()))
+    if do_print:
+        print(f'{prefix}/metrics')
+        print(', '.join(f'{k}: {v:.3f}' for k, v in metrics.items()))
 
 
 if __name__ == '__main__':
@@ -198,10 +207,11 @@ if __name__ == '__main__':
     train_key, subkey = jax.random.split(train_key)
     train_loader = get_loader(config['batch_size'], 4, 'train', subkey)
     val_loader   = get_loader(16, 1, 'validation', None)
-    img, mask, snake = prep(next(iter(train_loader)))
+    img, *_ = prep(next(iter(train_loader)))
 
     # Initialize model and optimizer state
     opt_init, _ = get_optimizer()
+
     params, buffers = S.init(jax.random.PRNGKey(39), img[:1], is_training=True)
     state = TrainingState(params=params, buffers=buffers, opt=opt_init(params))
     net = S.apply
@@ -223,7 +233,7 @@ if __name__ == '__main__':
               if m not in trn_metrics: trn_metrics[m] = []
               trn_metrics[m].append(metrics[m])
 
-        log_metrics(trn_metrics, 'trn', epoch)
+        log_metrics(trn_metrics, 'trn', epoch, do_print=False)
 
         if epoch % 10 != 0:
             continue
@@ -232,21 +242,26 @@ if __name__ == '__main__':
         ckpt_dir = Path('checkpoints')
         ckpt_dir.mkdir(exist_ok=True)
         save_state(state, ckpt_dir / f'{wandb.run.id}-latest.npz')
-        save_state(state, ckpt_dir / f'{wandb.run.id}-{epoch:04d}.npz')
+        # save_state(state, ckpt_dir / f'{wandb.run.id}-{epoch:04d}.npz')
 
         # Validate
         val_key = persistent_val_key
         val_metrics = {}
         for step, batch in enumerate(val_loader):
             val_key, subkey = jax.random.split(val_key)
-            metrics, *inspection = val_step(batch, state, subkey, net)
+            metrics, out = val_step(batch, state, subkey, net)
 
             for m in metrics:
               if m not in val_metrics: val_metrics[m] = []
               val_metrics[m].append(metrics[m])
 
-            imagery, contours, predictions = inspection
-            predictions = [p[0] for p in predictions]
-            log_anim(imagery[0], contours[0], predictions, f"Animated/{step}", epoch)
+            imagery     = out['imagery'][0]
+            snake       = out['snake'][0]
+            predictions = [p[0] for p in out['predictions']]
+            log_anim(imagery, snake, predictions, f"Animated/{step}", epoch)
+            if 'segmentation' in out:
+                segmentation = out['segmentation'][0]
+                mask = out['mask'][0]
+                log_segmentation(imagery, mask, segmentation, f'Segmentation/{step}', epoch)
 
         log_metrics(val_metrics, 'val', epoch)

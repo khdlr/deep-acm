@@ -187,7 +187,7 @@ class CalfinDataset(torch.utils.data.Dataset):
 
 
 if __name__ == '__main__':
-    ds = CalfinDataset('train')
+    ds = CalfinDataset('validation_zhang')
     print(len(ds))
     for a in tqdm(ds):
         for x in a:

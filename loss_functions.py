@@ -1,14 +1,16 @@
 import jax
 import jax.numpy as jnp
 from jax.scipy.special import logsumexp
+import haiku as hk
 
 from abc import ABC, abstractmethod
 from inspect import signature
 
-from utils import pad_inf, fmt, distance_matrix
+from utils import pad_inf, fmt, distance_matrix, min_pool
 from metrics import squared_distance_points_to_best_segment
 from lib.jump_flood import jump_flood
 from einops import rearrange
+
 
 
 def call_loss(loss_fn, prediction, mask, snake, key='loss'):
@@ -56,23 +58,37 @@ def min_min_loss(prediction, snake):
     return min_min
 
 
-def min_min_loss(prediction, snake):
-    D = distance_matrix(prediction, snake)
-    min1 = D.min(axis=0)
-    min2 = D.min(axis=1)
-    min_min = 0.5 * (jnp.mean(min1) + jnp.mean(min2))
-    return min_min
-
-
-def cce(prediction, mask):
+def bce(prediction, mask):
     prediction = prediction[..., 0]
+    assert prediction.shape == mask.shape
+
     logp   = jax.nn.log_sigmoid(prediction)
     log1mp = jax.nn.log_sigmoid(-prediction)
-    mask   = jnp.expand_dims(mask, -1)
     loss   = -logp * mask - (log1mp) * (1-mask)
 
     return jnp.mean(loss)
 
+
+def iou_loss(prediction, mask):
+    """corresponds to -log(iou_score) in the CALFIN code"""
+    eps = 1e-1
+    prediction = jax.nn.sigmoid(prediction[..., 0])
+
+    intersection = jnp.sum(prediction * mask, axis=[0, 1])
+    union        = jnp.sum(jnp.maximum(prediction, mask), axis=[0, 1])
+    score        = (intersection + eps) / (union + eps)
+    return -jnp.log(score)
+
+
+def calfin_loss(prediction, mask):
+    edge = hk.max_pool(mask, [5, 5], [1, 1], "SAME") != min_pool(mask, [5, 5], [1, 1], "SAME")
+
+    seg_loss  = jnp.mean(bce(prediction[..., :1], mask)) + \
+                jnp.mean(iou_loss(prediction[..., :1], mask))
+    edge_loss = jnp.mean(bce(prediction[..., 1:], edge)) + \
+                jnp.mean(iou_loss(prediction[..., 1:], edge))
+
+    return (1/26) * seg_loss + (25/26) * edge_loss
 
 
 class AbstractDTW(ABC):

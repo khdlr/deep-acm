@@ -6,20 +6,6 @@ from . import nnutils as nn
 from functools import partial
 
 
-def channel_dropout(x, rate):
-    if rate < 0 or rate >= 1:
-        raise ValueError("rate must be in [0, 1).")
-
-    if rate == 0.0:
-        return x
-
-    keep_rate = 1.0 - rate
-    mask_shape = (x.shape[0], *((1,) * (x.ndim-2)), x.shape[-1])
-
-    keep = jax.random.bernoulli(hk.next_rng_key(), keep_rate, shape=mask_shape)
-    return keep * x / keep_rate
-
-
 def subdivide_polyline(polyline):
     B, T, C = polyline.shape
     T_new = T * 2 - 1
@@ -55,6 +41,44 @@ class SnakeHead(hk.Module):
             hk.Conv1D(C, 3, rate=9), nn.ReLU(),
             hk.Conv1D(C, 3, rate=3), nn.ReLU(),
             hk.Conv1D(C, 3), nn.ReLU(),
+        ], name='SnakeBlocks')
+
+        # Initialize offset predictors with 0 -> default to no change
+        mk_offset = hk.Conv1D(2, 1, with_bias=False, w_init=hk.initializers.Constant(0.0))
+
+        features = []
+        for feature_map in feature_maps:
+            features.append(jax.vmap(sample_at_vertices, [0, 0])(vertices, feature_map))
+        # For coordinate features
+        if self.coord_features:
+            diff = vertices[:,1:] - vertices[:,:-1]
+            diff = jnp.pad(diff, [(0,0), (1,1), (0,0)])
+            features.append(diff[:, 1:])
+            features.append(diff[:, :-1])
+        input_features = jnp.concatenate(features, axis=-1)
+
+        convolved_features = blocks(input_features)
+        offsets = mk_offset(convolved_features)
+        return offsets
+
+
+class SeparableSnakeHead(hk.Module):
+    def __init__(self, channels, coord_features=False):
+        super().__init__()
+        self.channels = channels
+        self.coord_features = coord_features
+
+    def __call__(self, vertices, feature_maps):
+        C = self.channels
+
+        blocks = hk.Sequential([
+            nn.SepConvBN1D(C, 3),
+            nn.SepConvBN1D(C, 3, rate=3),
+            nn.SepConvBN1D(C, 3, rate=9),
+            nn.SepConvBN1D(C, 3),
+            nn.SepConvBN1D(C, 3, rate=3),
+            nn.SepConvBN1D(C, 3, rate=9),
+            hk.Conv1D(C, 1),
         ], name='SnakeBlocks')
 
         # Initialize offset predictors with 0 -> default to no change

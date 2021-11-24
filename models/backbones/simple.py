@@ -1,11 +1,6 @@
 import jax
 import jax.numpy as jnp
-import jax.scipy.ndimage as jnd
 import haiku as hk
-
-from . import nnutils as nn
-from .resnet import ResNet18, ResNet34, ResNet50, ResNet101, ResNet152, ResNet200
-from .slim_resnet import SlimResNet18, SlimResNet34, SlimResNet50, SlimResNet101, SlimResNet152, SlimResNet200
 
 
 class ResBlock(hk.Module):
@@ -68,3 +63,5 @@ class SimpleBackbone(hk.Module):
         x3 = block3(x2)
         x4 = block4(x3)
         return (x1, x2, x3, x4)
+
+

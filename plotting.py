@@ -15,90 +15,19 @@ from einops import rearrange
 
 RGB = [0, 1, 2]
 
-def draw_snake(draw, snake, dashed=False, **kwargs):
-    if dashed:
-        for (y0, x0, y1, x1) in snake.reshape((-1, 4)):
-            draw.line((x0, y0, x1, y1), **kwargs)
-    else:
-        for (y0, x0), (y1, x1) in zip(snake, snake[1:]):
-            draw.line((x0, y0, x1, y1), **kwargs)
 
-
-def log_image(img, truth, preds, tag, step):
+def log_segmentation(img, mask, pred, tag, step):
     H, W, C = img.shape
 
-    img = np.asarray(jax.image.resize(img, (512, 512, C), method='linear'))
-    img = img[:, :, RGB]
-    img = (255 * img[:,:, RGB]).astype(np.uint8)
+    fig, axs = plt.subplots(1, 3, figsize=(10, 3))
+    for ax in axs:
+        ax.axis('off')
+    axs[0].imshow(np.asarray(img[:, :, RGB]))
+    axs[1].imshow(np.asarray(pred[:,:,0]), cmap='gray', vmin=-1, vmax=1)
+    axs[2].imshow(np.asarray(mask), cmap='gray', vmin=0, vmax=1)
 
-    H, W, C = img.shape
-    truth = 0.5 * H * (1 + truth)
-    preds = [0.5 * H * (1 + p) for p in preds]
-
-    img = Image.fromarray(img, mode='RGB')
-
-    draw = ImageDraw.Draw(img)
-    draw_snake(draw, truth, fill=(255, 0, 0), width=3)
-
-    for i, snake in enumerate(preds, 1):
-        kwargs = dict(fill=(0, 255, 0))
-        if i == len(preds):
-            kwargs['width'] = 3
-        draw_snake(draw, snake, **kwargs)
-
-    img = np.asarray(img).astype(np.float32) / 255
-    wandb.log({tag: wandb.Image(img)}, step=step)
-
-
-def log_video(img, truth, preds, tag, step):
-    H, W, C = img.shape
-    img = np.asarray(jax.image.resize(img, (256, 256, C), method='linear'))
-    img = img[:, :, RGB]
-    img = (255 * img[:,:, RGB]).astype(np.uint8)
-
-    H, W, C = img.shape
-    truth = 0.5 * H * (1 + truth)
-    preds = [0.5 * H * (1 + p) for p in preds]
-
-    lerped_preds = []
-    t = jnp.linspace(0, 1, 20).reshape(-1, 1, 1)
-    for pred0, pred1 in zip(preds, preds[1:]):
-        if pred0.shape != pred1.shape:
-            pred0 = jax.image.resize(pred0, pred1.shape, 'linear')
-        lerped_preds += list( (1-t) * pred0 + t * pred1 )
-
-    base = Image.fromarray(img, mode='RGB')
-    draw = ImageDraw.Draw(base)
-    draw_snake(draw, truth, fill=(255, 0, 0), width=2)
-    frames = []
-    for pred in lerped_preds:
-        frame = base.copy()
-        draw = ImageDraw.Draw(frame)
-        draw_snake(draw, pred, fill=(0, 255, 0), width=2)
-        frames.append(np.asarray(frame).astype(np.uint8))
-
-    # Freeze-frame the last step
-    for i in range(20):
-        frames.append(frames[-1])
-
-    frames = jnp.stack(frames)
-    frames = rearrange(frames, 't h w c -> t c h w')
-    frames = np.asarray(frames)
-
-    wandb.log({tag: wandb.Video(frames, fps=20, format='gif')}, step=step)
-
-
-def make_path_string(vertices):
-    return 'M' + ' L'.join(f'{x:.2f},{y:.2f}' for y, x in vertices)
-
-
-def animated_path(paths):
-    pathvalues = ";".join(make_path_string(path) for path in paths)
-    keytimes = ";".join(f'{x:.2f}' for x in np.linspace(0, 1, len(paths)))
-    return f"""<path fill="none" stroke="rgb(255, 255, 0)" stroke-width="1">
-          <animate attributeName="d" values="{pathvalues}" keyTimes="{keytimes}" dur="3s" repeatCount="indefinite" />
-          </path>
-          """
+    wandb.log({tag: wandb.Image(fig)}, step=step)
+    plt.close(fig)
 
 
 def log_anim(img, truth, pred, tag, step):
@@ -114,6 +43,7 @@ def log_anim(img, truth, pred, tag, step):
     truth = 0.5 * H * (1 + truth)
     gtpath = make_path_string(truth)
 
+    path_html = ""
     pred = [0.5 * H * (1 + p) for p in pred]
     pred = pred + [pred[-1], pred[-1]]
     path_html = animated_path(pred)
@@ -135,3 +65,26 @@ def log_anim(img, truth, pred, tag, step):
     """
 
     wandb.log({tag: wandb.Html(html, inject=False)}, step=step)
+
+
+
+def draw_snake(draw, snake, dashed=False, **kwargs):
+    if dashed:
+        for (y0, x0, y1, x1) in snake.reshape((-1, 4)):
+            draw.line((x0, y0, x1, y1), **kwargs)
+    else:
+        for (y0, x0), (y1, x1) in zip(snake, snake[1:]):
+            draw.line((x0, y0, x1, y1), **kwargs)
+
+
+def make_path_string(vertices):
+    return 'M' + ' L'.join(f'{x:.2f},{y:.2f}' for y, x in vertices)
+
+
+def animated_path(paths):
+    pathvalues = ";".join(make_path_string(path) for path in paths)
+    keytimes = ";".join(f'{x:.2f}' for x in np.linspace(0, 1, len(paths)))
+    return f"""<path fill="none" stroke="rgb(255, 255, 0)" stroke-width="1">
+          <animate attributeName="d" values="{pathvalues}" keyTimes="{keytimes}" dur="3s" repeatCount="indefinite" />
+          </path>
+          """
