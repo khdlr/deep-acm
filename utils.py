@@ -7,6 +7,7 @@ from jax.experimental import host_callback
 from skimage.measure import find_contours
 from functools import partial
 from typing import Union, Sequence, Optional, Tuple
+from subprocess import check_output
 
 
 def distance_matrix(a, b):
@@ -38,6 +39,12 @@ def fmt(xs, extra=None):
     elif rank == 2:
         print('\n'.join(','.join([fmt_num(x) for x in row]) for row in xs))
         print()
+
+
+def assert_git_clean():
+    diff = check_output(['git', 'diff', 'HEAD'])
+    assert not diff, "Won't run on a dirty git state!"
+        
 
 
 def snakify(mask, vertices):

@@ -179,6 +179,7 @@ def log_metrics(metrics, prefix, epoch, do_print=True):
 
 
 if __name__ == '__main__':
+    utils.assert_git_clean()
     train_key = jax.random.PRNGKey(42)
     persistent_val_key = jax.random.PRNGKey(27)
     multiplier = 64
