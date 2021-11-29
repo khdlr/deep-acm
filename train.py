@@ -46,7 +46,7 @@ def get_optimizer():
         peak_value=1e-3,
         warmup_steps=1024,
         decay_steps=200000-1024,
-        end_value=1e-5
+        end_value=1e-4
     )
     return optax.adam(lr_schedule, b1=0.5, b2=0.9)
 
