@@ -1,7 +1,7 @@
 # Model Specification
 model: DeepSnake
 model_args:
-  backbone: ResNet50
+  backbone: XceptionLessSkip
   model_dim: 1024
   iterations: 4
   coord_features: true
