@@ -28,11 +28,11 @@ class Xception(hk.Module):
         bD = nn.upsample(bD, factor=2)
 
         b0 = nn.ConvBNAct(256, 1, act='elu')(x, is_training)
-        b1 = nn.SepConvBN(256, rate=1, depth_activation=True)(x, is_training)
-        b2 = nn.SepConvBN(256, rate=2, depth_activation=True)(x, is_training)
-        b3 = nn.SepConvBN(256, rate=3, depth_activation=True)(x, is_training)
-        b4 = nn.SepConvBN(256, rate=4, depth_activation=True)(x, is_training)
-        b5 = nn.SepConvBN(256, rate=5, depth_activation=True)(x, is_training)
+        b1 = nn.SepConvBN(256, rate=1)(x, is_training)
+        b2 = nn.SepConvBN(256, rate=2)(x, is_training)
+        b3 = nn.SepConvBN(256, rate=3)(x, is_training)
+        b4 = nn.SepConvBN(256, rate=4)(x, is_training)
+        b5 = nn.SepConvBN(256, rate=5)(x, is_training)
         x = jnp.concatenate([bD, b0, b1, b2, b3, b4, b5], axis=-1)
 
         x = nn.ConvBNAct(256, 1, act='elu')(x, is_training)
@@ -72,10 +72,10 @@ class XceptionSlim(hk.Module):
         bD = nn.upsample(bD, factor=2)
 
         b0 = nn.ConvBNAct(64, 1, act='elu')(x, is_training)
-        b1 = nn.SepConvBN(64, rate=1, depth_activation=True)(x, is_training)
-        b2 = nn.SepConvBN(64, rate=2, depth_activation=True)(x, is_training)
-        b3 = nn.SepConvBN(64, rate=4, depth_activation=True)(x, is_training)
-        b4 = nn.SepConvBN(64, rate=8, depth_activation=True)(x, is_training)
+        b1 = nn.SepConvBN(64, rate=1)(x, is_training)
+        b2 = nn.SepConvBN(64, rate=2)(x, is_training)
+        b3 = nn.SepConvBN(64, rate=4)(x, is_training)
+        b4 = nn.SepConvBN(64, rate=8)(x, is_training)
         x = jnp.concatenate([bD, b0, b1, b2, b4], axis=-1)
 
         x = nn.ConvBNAct(256, 1, act='elu')(x, is_training)
@@ -88,7 +88,7 @@ class XceptionSlim(hk.Module):
 
 class XceptionBlock(hk.Module):
     def __init__(self, depth_list, stride, skip_type='conv',
-                 rate=1, depth_activation=False, return_skip=False):
+                 rate=1, return_skip=False):
         super().__init__()
         self.blocks = []
         if rate == 1:
@@ -98,7 +98,6 @@ class XceptionBlock(hk.Module):
                 depth_list[i],
                 stride=stride if i == 2 else 1,
                 rate=rate[i],
-                depth_activation=depth_activation
             ))
 
         if skip_type == 'conv':
