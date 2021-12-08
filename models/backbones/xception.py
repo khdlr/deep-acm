@@ -39,15 +39,8 @@ class Xception(hk.Module):
         if is_training:
             x = nn.channel_dropout(x, 0.2)
 
-        return [skip1, skip2, skip3, x]
-
-
-class XceptionLessSkip(hk.Module):
-    """Xception backbone with less skip connections"""
-    def __call__(self, x, is_training=False):
-        _, _, skip, x = Xception()(x, is_training)
-        skip = nn.ConvBNAct(48, 1, act='elu')(skip, is_training)
-        return [skip, x]
+        skip3 = nn.ConvBNAct(48, 1, act='elu')(skip3, is_training)
+        return [skip3, x]
 
 
 class XceptionSlim(hk.Module):
@@ -83,7 +76,6 @@ class XceptionSlim(hk.Module):
             x = nn.channel_dropout(x, 0.5)
 
         return [skip2, x]
-
 
 
 class XceptionBlock(hk.Module):

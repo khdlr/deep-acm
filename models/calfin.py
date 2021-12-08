@@ -15,12 +15,11 @@ class CFM:
 
     def __call__(self, x, is_training=False):
         B, H, W, C = x.shape
-        _, _, skip3, x = Xception()(x, is_training)
+        skip, x = Xception()(x, is_training)
 
         # Decoder
         x = nn.upsample(x, shp=[H//4, W//4])
-        dec_skip1 = nn.ConvBNAct(48, 1, act='elu')(skip3, is_training)
-        x = jnp.concatenate([x, dec_skip1], axis=-1)
+        x = jnp.concatenate([x, skip], axis=-1)
         x = nn.SepConvBN(256, depth_activation=True)(x, is_training)
         x = nn.SepConvBN(256, depth_activation=True)(x, is_training)
         x = hk.Conv2D(2, 1)(x)
