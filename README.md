@@ -3,6 +3,6 @@
 This repository contains the code for training a deep active contour model
 that can be used for calving front detection.
 
-![example8](examples/8.svg)
-![example9](examples/9.svg)
-![example26](examples/26.svg)
+## Animated Predictions
+https://user-images.githubusercontent.com/9249838/149772570-4c73976d-2a50-45d6-a94a-7a4aadf393cf.mp4
+
