@@ -8,7 +8,6 @@ from inspect import signature
 
 from utils import pad_inf, fmt, distance_matrix, min_pool
 from metrics import squared_distance_points_to_best_segment
-from lib.jump_flood import jump_flood
 from einops import rearrange
 
 
@@ -217,11 +216,3 @@ def forward_rmse(prediction, snake):
 def backward_rmse(prediction, snake):
     squared_dist = squared_distance_points_to_best_segment(snake, prediction)
     return jnp.sqrt(jnp.mean(squared_dist))
-
-
-def closest_point_loss(prediction, mask):
-    true_offsets = jax.lax.stop_gradient(jump_flood(mask[..., 0]))
-    error  = jnp.sum(jnp.square(prediction - true_offsets), axis=-1)
-    length = jnp.sum(jnp.square(true_offsets), axis=-1)
-
-    return jnp.mean(error / length)

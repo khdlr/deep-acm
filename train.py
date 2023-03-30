@@ -12,7 +12,6 @@ from jax.experimental.host_callback import id_print
 import haiku as hk
 import optax
 from data_loading import get_loader 
-from generate_data import generate_image 
 from functools import partial
 
 import wandb
@@ -91,7 +90,7 @@ def prep(batch, key=None, augment=False, input_types=None):
         key = jax.random.PRNGKey(0)
     subkeys = jax.random.split(key, batch[0].shape[0])
     transformation = jax.vmap(chain)
-    outputs = list(transformation(subkeys, *batch))
+    outputs = list(transformation(subkeys, batch))
     for i, typ in enumerate(input_types):
         if typ == augmax.InputType.CONTOUR:
             outputs[i] = 2 * (outputs[i] / outputs[0].shape[1]) - 1.0
