@@ -1,7 +1,11 @@
 # Deep Active Contour Models for Calving Front Detection
 
+> [!WARNING]  
+> This is intermediate work presented at IGARSS 2022. For the final version of the project, please check out https://github.com/khdlr/COBRA
+
 This repository contains the code for training a deep active contour model
 that can be used for calving front detection.
+
 
 ## Animated Predictions
 
